@@ -7,6 +7,7 @@ import type {
   AssetResponse,
   AudioEventArtifact,
   AudioTrackArtifact,
+  GenerationModel,
   SoundEvent,
   SoundTrack,
   TimelineRow,
@@ -331,7 +332,8 @@ export default function VideoEditor({
       label: input.label,
       canonical_key: input.canonicalKey ?? normalizeCanonicalKey(input.label),
       sound_source_id: null,
-      generation_mode: input.generationMode,
+      generation_model:
+        input.trackType === "speech" ? "tts" : input.generationModel,
       notes: null,
     };
     setDraftAsset((currentAsset) => {
@@ -344,6 +346,38 @@ export default function VideoEditor({
     });
     setHasTimelineEdits(true);
     setExportStatus(`Created sound track "${track.label}".`);
+  }
+
+  function editSoundTrackGenerationModel(
+    soundTrackId: string,
+    generationModel: GenerationModel,
+  ) {
+    const track = soundTracks.find((item) => item.sound_track_id === soundTrackId);
+    if (!track || track.track_type === "speech") {
+      return;
+    }
+    setDraftAsset((currentAsset) => {
+      if (!currentAsset?.sound_timeline) {
+        return currentAsset;
+      }
+      const nextAsset = cloneAsset(currentAsset);
+      const nextTrack = nextAsset.sound_timeline?.sound_tracks.find(
+        (item) => item.sound_track_id === soundTrackId,
+      );
+      if (nextTrack) {
+        nextTrack.generation_model = generationModel;
+      }
+      return nextAsset;
+    });
+    setTimelineRows((currentRows) =>
+      currentRows.map((row) =>
+        row.sound_track_id === soundTrackId
+          ? { ...row, generation_model: generationModel }
+          : row,
+      ),
+    );
+    setHasTimelineEdits(true);
+    setExportStatus(`Changed "${track.label}" to ${generationModel.toUpperCase()}.`);
   }
 
   function deleteSoundTrack(soundTrackId: string) {
@@ -388,6 +422,13 @@ export default function VideoEditor({
     if (!track) {
       return;
     }
+    let spokenText: string | null = null;
+    if (track.track_type === "speech") {
+      spokenText = window.prompt("Enter the spoken text for this event")?.trim() ?? "";
+      if (!spokenText) {
+        return;
+      }
+    }
     const nextStart = clamp(startFrame, 0, Math.max(0, maxFrame));
     const nextEnd = clamp(nextStart + 10, nextStart + 1, timelineFrameCount || 1);
     const event: SoundEvent = {
@@ -396,6 +437,7 @@ export default function VideoEditor({
       start_frame_index: nextStart,
       end_frame_index: nextEnd,
       description: `New ${track.label} event`,
+      spoken_text: spokenText,
       notes: null,
     };
     setDraftAsset((currentAsset) => {
@@ -467,39 +509,45 @@ export default function VideoEditor({
     setEditingEventId(soundEventId);
   }
 
-  function submitEditSoundEventDetails(soundEventId: string, newPrompt: string, newModeRaw: string) {
-    const row = timelineRows.find((r) => r.sound_event_id === soundEventId);
-    if (!row) return;
+  function submitEditSoundEventDetails(
+    soundEventId: string,
+    description: string,
+    spokenText: string | null,
+  ) {
+    const row = timelineRows.find((item) => item.sound_event_id === soundEventId);
+    const track = soundTracks.find(
+      (item) => item.sound_track_id === row?.sound_track_id,
+    );
+    const nextDescription = description.trim();
+    const nextSpokenText =
+      track?.track_type === "speech" ? spokenText?.trim() || null : null;
+    if (
+      !row ||
+      !nextDescription ||
+      (track?.track_type === "speech" && !nextSpokenText)
+    ) {
+      return;
+    }
 
-    const newMode = newModeRaw.toLowerCase().trim() as any;
-
-    setDraftAsset((currentAsset) => {
-      if (!currentAsset?.sound_timeline) return currentAsset;
-      const nextAsset = cloneAsset(currentAsset);
-      
-      const track = nextAsset.sound_timeline?.sound_tracks.find(t => t.sound_track_id === row.sound_track_id);
-      if (track) {
-        track.generation_mode = newMode;
-      }
-      
-      const event = nextAsset.sound_timeline?.sound_events.find(e => e.sound_event_id === soundEventId);
-      if (event) {
-        event.description = newPrompt.trim();
-      }
-      return nextAsset;
-    });
-
+    setDraftAsset((currentAsset) =>
+      currentAsset
+        ? updateSoundEventInAsset(currentAsset, soundEventId, (event) => ({
+            ...event,
+            description: nextDescription,
+            spoken_text: nextSpokenText,
+          }))
+        : currentAsset,
+    );
     setTimelineRows((currentRows) =>
-      currentRows.map((r) => {
-        if (r.sound_track_id === row.sound_track_id) {
-          return {
-            ...r,
-            generation_mode: newMode,
-            label: r.sound_event_id === soundEventId ? newPrompt.trim() : r.label
-          };
-        }
-        return r;
-      }),
+      currentRows.map((item) =>
+        item.sound_event_id === soundEventId
+          ? {
+              ...item,
+              label: nextDescription,
+              spoken_text: nextSpokenText,
+            }
+          : item,
+      ),
     );
     setHasTimelineEdits(true);
     setExportStatus("Updated sound event details.");
@@ -819,6 +867,7 @@ export default function VideoEditor({
             frameCount={timelineFrameCount}
             onCreateSoundTrack={createSoundTrack}
             onDeleteSoundTrack={deleteSoundTrack}
+            onEditSoundTrackGenerationModel={editSoundTrackGenerationModel}
             onCreateSoundEvent={createSoundEvent}
             onDeleteSoundEvent={deleteSoundEvent}
             onEditSoundEventDescription={editSoundEventDescription}
@@ -832,32 +881,49 @@ export default function VideoEditor({
         </section>
 
         {editingEventId && (() => {
-          const row = timelineRows.find((r) => r.sound_event_id === editingEventId);
+          const row = timelineRows.find((item) => item.sound_event_id === editingEventId);
           if (!row) return null;
+          const soundEvent = draftAsset?.sound_timeline?.sound_events.find(
+            (item) => item.sound_event_id === editingEventId,
+          );
+          const soundTrack = soundTracks.find(
+            (item) => item.sound_track_id === row.sound_track_id,
+          );
+          const isSpeech = soundTrack?.track_type === "speech";
           const eventAudio = audioEventArtifacts.find((item) => item.sound_event_id === editingEventId);
           return (
-            <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <form 
-                style={{ background: "#222", padding: "1.5rem", borderRadius: "8px", width: "450px", display: "flex", flexDirection: "column", gap: "1.2rem", boxShadow: "0 10px 25px rgba(0,0,0,0.5)", border: "1px solid #444" }}
+            <div className="event-dialog-backdrop">
+              <form
+                aria-labelledby="edit-sound-event-title"
+                aria-modal="true"
+                className="event-dialog"
+                role="dialog"
                 onSubmit={(e) => {
                   e.preventDefault();
                   const fd = new FormData(e.currentTarget);
-                  submitEditSoundEventDetails(editingEventId, fd.get("description") as string, fd.get("generation_mode") as string);
+                  submitEditSoundEventDetails(
+                    editingEventId,
+                    String(fd.get("description") || ""),
+                    isSpeech ? String(fd.get("spoken_text") || "") : null,
+                  );
                 }}
               >
-                <h3 style={{ margin: 0, fontSize: "1.2rem" }}>Edit Sound Event</h3>
-                <label style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                  <span style={{ fontSize: "0.9rem", color: "#ccc" }}>Prompt (Description)</span>
-                  <textarea name="description" defaultValue={row.label} rows={4} style={{ width: "100%", padding: "0.75rem", background: "#111", color: "#fff", border: "1px solid #444", borderRadius: "4px", resize: "vertical" }} required />
+                <h3 id="edit-sound-event-title">Edit Sound Event</h3>
+                <label>
+                  <span>Acoustic description</span>
+                  <textarea name="description" defaultValue={row.label} rows={4} required />
                 </label>
-                <label style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                  <span style={{ fontSize: "0.9rem", color: "#ccc" }}>Generation Mode</span>
-                  <select name="generation_mode" defaultValue={row.generation_mode || "vta"} style={{ padding: "0.75rem", background: "#111", color: "#fff", border: "1px solid #444", borderRadius: "4px" }}>
-                    <option value="vta">VTA (Video-to-Audio)</option>
-                    <option value="tta">TTA (Text-to-Audio)</option>
-                    <option value="hybrid">Hybrid</option>
-                  </select>
-                </label>
+                {isSpeech ? (
+                  <label>
+                    <span>Spoken text</span>
+                    <textarea
+                      name="spoken_text"
+                      defaultValue={soundEvent?.spoken_text ?? ""}
+                      rows={3}
+                      required
+                    />
+                  </label>
+                ) : null}
                 {eventAudio ? (
                   <div className="event-audio-actions">
                     <button
@@ -876,9 +942,9 @@ export default function VideoEditor({
                     </a>
                   </div>
                 ) : null}
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "0.5rem" }}>
-                  <button type="button" className="secondary" onClick={() => setEditingEventId(null)} style={{ padding: "0.5rem 1rem", background: "transparent", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", color: "#eee" }}>Cancel</button>
-                  <button type="submit" style={{ padding: "0.5rem 1rem", background: "#3b82f6", border: "none", borderRadius: "4px", cursor: "pointer", color: "white", fontWeight: "bold" }}>Save Changes</button>
+                <div className="event-dialog-actions">
+                  <button type="button" className="secondary" onClick={() => setEditingEventId(null)}>Cancel</button>
+                  <button type="submit">Save Changes</button>
                 </div>
               </form>
             </div>
@@ -938,6 +1004,7 @@ function applyTimelineEdits(asset: VideoAsset, rows: TimelineRow[]): VideoAsset 
       start_frame_index: row.start_frame,
       end_frame_index: row.end_frame,
       description: row.label,
+      spoken_text: row.spoken_text ?? event.spoken_text,
     };
   });
   return editedAsset;
@@ -984,7 +1051,8 @@ function timelineRowFromSoundEvent(
     kind: track.track_type,
     sound_event_id: event.sound_event_id,
     sound_track_id: event.sound_track_id,
-    generation_mode: track.generation_mode,
+    generation_model: track.generation_model,
+    spoken_text: event.spoken_text,
   };
 }
 

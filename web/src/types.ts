@@ -1,5 +1,8 @@
 export type RunStatus = "idle" | "running" | "complete" | "failed";
 
+export type SoundTrackType = "speech" | "sfx" | "music" | "ambience";
+export type GenerationModel = "t2a" | "v2a" | "tts";
+
 export interface AssetResponse {
   status: RunStatus;
   stage: string | null;
@@ -146,11 +149,11 @@ export interface SoundSource {
 
 export interface SoundTrack {
   sound_track_id: string;
-  track_type: string;
+  track_type: SoundTrackType;
   label: string;
   canonical_key?: string | null;
   sound_source_id?: string | null;
-  generation_mode: string;
+  generation_model: GenerationModel;
   notes?: string | null;
 }
 
@@ -160,6 +163,7 @@ export interface SoundEvent {
   start_frame_index: number;
   end_frame_index: number;
   description: string;
+  spoken_text?: string | null;
   notes?: string | null;
 }
 
@@ -171,7 +175,8 @@ export interface TimelineRow {
   kind: string;
   sound_event_id?: string;
   sound_track_id?: string;
-  generation_mode?: string;
+  generation_model?: GenerationModel;
+  spoken_text?: string | null;
 }
 
 export interface CurrentFrameRows {
@@ -218,7 +223,8 @@ export interface SoundEventFrameRow {
   start_frame: number;
   end_frame: number;
   duration_sec: number;
-  generation_mode: string;
+  generation_model: GenerationModel;
   description: string;
+  spoken_text: string | null;
   notes: string | null;
 }

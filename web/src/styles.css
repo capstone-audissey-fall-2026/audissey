@@ -15,7 +15,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -115,7 +116,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   background: #0d0f13;
   border: 1px solid #333844;
   border-radius: 5px;
@@ -531,7 +533,7 @@ button.download-link {
 }
 
 .timeline {
-  --timeline-label-width: 142px;
+  --timeline-label-width: 210px;
   --timeline-gap: 8px;
   --timeline-track-offset: calc(var(--timeline-label-width) + var(--timeline-gap));
   flex: 1;
@@ -646,6 +648,13 @@ button.download-link {
   display: flex;
   flex-shrink: 0;
   gap: 3px;
+}
+
+.lane-model-select {
+  font-size: 10px;
+  height: 18px;
+  padding: 0 3px;
+  width: 52px;
 }
 
 .lane-play-button {
@@ -812,6 +821,53 @@ button.download-link {
   color: #d8dde6;
 }
 
+.event-dialog-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.68);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 16px;
+  position: fixed;
+  z-index: 9999;
+}
+
+.event-dialog {
+  background: #1b1e25;
+  border: 1px solid #3a4050;
+  border-radius: 8px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  gap: 16px;
+  max-height: calc(100vh - 32px);
+  max-width: 450px;
+  overflow: auto;
+  padding: 24px;
+  width: 100%;
+}
+
+.event-dialog h3 {
+  font-size: 19px;
+  margin: 0;
+}
+
+.event-dialog textarea {
+  min-height: 72px;
+  resize: vertical;
+  width: 100%;
+}
+
+.event-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.event-dialog-actions .secondary {
+  background: transparent;
+  border: 1px solid #555c69;
+  color: #d8dde6;
+}
+
 .bar-scene {
   background: #3d79d1;
 }
@@ -829,7 +885,7 @@ button.download-link {
   background: #c84f4f;
 }
 
-.bar-dialogue {
+.bar-speech {
   background: #a25d2a;
 }
 

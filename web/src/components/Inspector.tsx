@@ -119,8 +119,9 @@ function activeSoundEventRows(
         start_frame: row.start_frame,
         end_frame: row.end_frame,
         duration_sec: Number(((row.end_frame - row.start_frame) / fps).toFixed(2)),
-        generation_mode: row.generation_mode || "unknown",
+        generation_model: row.generation_model || "t2a",
         description: row.label,
+        spoken_text: row.spoken_text ?? null,
         notes: null,
       };
     });
@@ -205,7 +206,7 @@ function SoundEventDetails({ rows }: { rows: SoundEventFrameRow[] }) {
         >
           <div className="detail-card-title">
             <strong>{row.track_label}</strong>
-            <span>{row.generation_mode}</span>
+            <span>{row.generation_model.toUpperCase()}</span>
           </div>
           <dl className="detail-grid">
             <Field label="Type" value={row.track_type} />
@@ -213,6 +214,9 @@ function SoundEventDetails({ rows }: { rows: SoundEventFrameRow[] }) {
             <Field label="Frames" value={`${row.start_frame}-${row.end_frame}`} />
             <Field label="Duration" value={`${row.duration_sec}s`} />
             <Field label="Description" value={row.description} wide />
+            {row.track_type === "speech" ? (
+              <Field label="Spoken text" value={row.spoken_text || "-"} wide />
+            ) : null}
             <Field label="Notes" value={row.notes || "-"} wide />
           </dl>
         </article>

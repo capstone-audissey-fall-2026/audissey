@@ -10,7 +10,9 @@ import {
 import type {
   AudioEventArtifact,
   AudioTrackArtifact,
+  GenerationModel,
   SoundTrack,
+  SoundTrackType,
   TimelineRow,
 } from "../types";
 
@@ -32,6 +34,10 @@ interface TimelineProps {
   ) => void;
   onCreateSoundTrack?: (input: CreateSoundTrackInput) => void;
   onDeleteSoundTrack?: (soundTrackId: string) => void;
+  onEditSoundTrackGenerationModel?: (
+    soundTrackId: string,
+    generationModel: GenerationModel,
+  ) => void;
   onCreateSoundEvent?: (soundTrackId: string, startFrame: number) => void;
   onDeleteSoundEvent?: (soundEventId: string) => void;
   onEditSoundEventDescription?: (
@@ -42,8 +48,6 @@ interface TimelineProps {
 }
 
 type LaneKind = "scene" | "tracking" | "visual" | "sound" | "audio";
-type TrackType = "sfx" | "ambience" | "dialogue" | "music";
-type GenerationMode = "unknown" | "tta" | "vta" | "hybrid";
 
 interface TimelineTooltip {
   content: string;
@@ -52,9 +56,9 @@ interface TimelineTooltip {
 }
 
 export interface CreateSoundTrackInput {
-  trackType: TrackType;
+  trackType: SoundTrackType;
   label: string;
-  generationMode: GenerationMode;
+  generationModel: GenerationModel;
   canonicalKey: string | null;
 }
 
@@ -102,6 +106,7 @@ export default function Timeline({
   onEditSoundEvent,
   onCreateSoundTrack,
   onDeleteSoundTrack,
+  onEditSoundTrackGenerationModel,
   onCreateSoundEvent,
   onDeleteSoundEvent,
   onEditSoundEventDescription,
@@ -116,8 +121,8 @@ export default function Timeline({
   });
   const dragRef = useRef<ActiveDrag | null>(null);
   const [showCreateTrack, setShowCreateTrack] = useState(false);
-  const [trackType, setTrackType] = useState<TrackType>("sfx");
-  const [generationMode, setGenerationMode] = useState<GenerationMode>("vta");
+  const [trackType, setTrackType] = useState<SoundTrackType>("sfx");
+  const [generationModel, setGenerationModel] = useState<GenerationModel>("t2a");
   const [trackLabel, setTrackLabel] = useState("");
   const [canonicalKey, setCanonicalKey] = useState("");
   const [tooltip, setTooltip] = useState<TimelineTooltip | null>(null);
@@ -242,7 +247,7 @@ export default function Timeline({
     onCreateSoundTrack({
       trackType,
       label,
-      generationMode,
+      generationModel: trackType === "speech" ? "tts" : generationModel,
       canonicalKey: canonicalKey.trim() || null,
     });
     setTrackLabel("");
@@ -315,31 +320,45 @@ export default function Timeline({
         <form className="timeline-create-track" onSubmit={submitCreateTrack}>
           <select
             value={trackType}
-            onChange={(event) => setTrackType(event.target.value as TrackType)}
+            aria-label="Track type"
+            onChange={(event) => {
+              const nextType = event.target.value as SoundTrackType;
+              setTrackType(nextType);
+              setGenerationModel(nextType === "speech" ? "tts" : "t2a");
+            }}
           >
             <option value="sfx">sfx</option>
             <option value="ambience">ambience</option>
-            <option value="dialogue">dialogue</option>
+            <option value="speech">speech</option>
             <option value="music">music</option>
           </select>
           <input
             value={trackLabel}
             onChange={(event) => setTrackLabel(event.target.value)}
+            aria-label="Track label"
             placeholder="Track label"
           />
           <select
-            value={generationMode}
-            onChange={(event) => setGenerationMode(event.target.value as GenerationMode)}
-            title="Generation Mode"
+            aria-label="Generation model"
+            disabled={trackType === "speech"}
+            value={trackType === "speech" ? "tts" : generationModel}
+            onChange={(event) =>
+              setGenerationModel(event.target.value as GenerationModel)
+            }
           >
-            <option value="vta">VTA (Video-to-Audio)</option>
-            <option value="tta">TTA (Text-to-Audio)</option>
-            <option value="hybrid">Hybrid</option>
-            <option value="unknown">Unknown</option>
+            {trackType === "speech" ? (
+              <option value="tts">TTS</option>
+            ) : (
+              <>
+                <option value="t2a">T2A</option>
+                <option value="v2a">V2A</option>
+              </>
+            )}
           </select>
           <input
             value={canonicalKey}
             onChange={(event) => setCanonicalKey(event.target.value)}
+            aria-label="Canonical key"
             placeholder="canonical_key"
           />
           <button type="submit">Create</button>
@@ -393,6 +412,34 @@ export default function Timeline({
                   </span>
                   {soundTrackId ? (
                     <div className="lane-actions">
+                      {soundTrack ? (
+                        <select
+                          aria-label={`Generation model for ${soundTrack.label}`}
+                          className="lane-model-select"
+                          disabled={soundTrack.track_type === "speech"}
+                          onChange={(event) =>
+                            onEditSoundTrackGenerationModel?.(
+                              soundTrack.sound_track_id,
+                              event.target.value as GenerationModel,
+                            )
+                          }
+                          title={
+                            soundTrack.track_type === "speech"
+                              ? "Speech tracks always use TTS"
+                              : "Track generation model"
+                          }
+                          value={soundTrack.generation_model}
+                        >
+                          {soundTrack.track_type === "speech" ? (
+                            <option value="tts">TTS</option>
+                          ) : (
+                            <>
+                              <option value="t2a">T2A</option>
+                              <option value="v2a">V2A</option>
+                            </>
+                          )}
+                        </select>
+                      ) : null}
                       {audioTrack ? (
                         <button
                           className="lane-play-button"
@@ -466,7 +513,9 @@ export default function Timeline({
                       kind === "visual"
                         ? ({ "--bar-color": visualEventColor(row.kind) } as CSSProperties)
                         : {};
-                    const genPrefix = row.generation_mode && row.generation_mode !== "unknown" ? `[${row.generation_mode.toUpperCase()}] ` : "";
+                    const genPrefix = row.generation_model
+                      ? `[${row.generation_model.toUpperCase()}] `
+                      : "";
                     const tooltipContent = soundEventTooltip(row, genPrefix, hasEventAudio);
                     return (
                       <div
@@ -625,7 +674,7 @@ function trackInfoTooltip(
   const lines = [lane];
   if (track) {
     lines.push(`Track type: ${track.track_type}`);
-    lines.push(`Generation mode: ${track.generation_mode || "unknown"}`);
+    lines.push(`Generation model: ${track.generation_model}`);
     if (track.canonical_key) {
       lines.push(`Canonical key: ${track.canonical_key}`);
     }
@@ -655,7 +704,7 @@ function soundEventTooltip(
 ): string {
   const generation = generationPrefix
     ? `Generation: ${generationPrefix.replace(/[\[\] ]/g, "")}`
-    : "Generation: unknown";
+    : "Generation: not assigned";
   return [
     row.label,
     `Frames: ${row.start_frame}-${row.end_frame}`,
