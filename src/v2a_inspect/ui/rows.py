@@ -255,6 +255,7 @@ def timeline_rows(video_asset: VideoAsset) -> list[TableRow]:
                 "sound_event_id": row["sound_event_id"],
                 "sound_track_id": row["sound_track_id"],
                 "generation_model": row["generation_model"],
+                "spoken_text": row["spoken_text"],
             }
         )
     return rows

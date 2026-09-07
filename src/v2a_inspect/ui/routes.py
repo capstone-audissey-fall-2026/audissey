@@ -319,7 +319,10 @@ def create_router(store: VideoAssetStore) -> APIRouter:
             stage="queued audio generation",
         )
         background_tasks.add_task(
-            run_audio_generation_pipeline, video_asset, store, server_url
+            run_audio_generation_pipeline,
+            video_asset,
+            store,
+            server_url or DEFAULT_SERVER_URL or None,
         )
         return {"status": "queued"}
 
