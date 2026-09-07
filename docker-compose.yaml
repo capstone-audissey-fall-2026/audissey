@@ -1,25 +1,70 @@
 services:
-  v2a-inspect:
-    image: ${V2A_INSPECT_IMAGE:-ghcr.io/sogang-v2a/v2a_inspect:latest}
+  inference:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: ${V2A_INSPECT_SERVER_IMAGE:-v2a-inspect-server:local}
     restart: unless-stopped
-
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-
+    env_file:
+      - path: .env
+        required: false
     gpus: all
+    ports:
+      - "${V2A_INSPECT_INFERENCE_PORT:-8080}:8080"
+    environment:
+      V2A_SERVER_HOST: 0.0.0.0
+      V2A_SERVER_PORT: 8080
+      V2A_SERVER_UPLOAD_DIR: /data/uploads
+      V2A_SERVER_HUNYUAN_MODEL_PATH: /data/model-cache/hunyuan
+      V2A_SERVER_HUNYUAN_MODEL_SIZE: ${V2A_SERVER_HUNYUAN_MODEL_SIZE:-xl}
+      V2A_SERVER_HUNYUAN_ENABLE_OFFLOAD: ${V2A_SERVER_HUNYUAN_ENABLE_OFFLOAD:-false}
+      V2A_SERVER_KOKORO_MODEL_ID: ${V2A_SERVER_KOKORO_MODEL_ID:-hexgrad/Kokoro-82M}
+      V2A_SERVER_KOKORO_LANGUAGE: ${V2A_SERVER_KOKORO_LANGUAGE:-a}
+      V2A_SERVER_KOKORO_VOICE: ${V2A_SERVER_KOKORO_VOICE:-af_heart}
+      V2A_SERVER_KOKORO_DEVICE: ${V2A_SERVER_KOKORO_DEVICE:-cpu}
+      HF_HOME: /data/model-cache/huggingface
+      TRANSFORMERS_CACHE: /data/model-cache/transformers
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}
+    volumes:
+      - v2a_server_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10m
 
+  v2a-inspect:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${V2A_INSPECT_IMAGE:-v2a-inspect:local}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      inference:
+        condition: service_started
     ports:
       - "${V2A_INSPECT_UI_PORT:-8501}:8501"
-
     environment:
       V2A_INSPECT_UI_HOST: 0.0.0.0
       V2A_INSPECT_UI_PORT: 8501
       V2A_INSPECT_UI_WORK_DIR: /data/work
       V2A_INSPECT_UI_STATIC_DIR: /app/web/dist
-      V2A_INSPECT_AUTH_COOKIE: ${V2A_INSPECT_AUTH_COOKIE:-v2a_inspect_auth}
-      V2A_INSPECT_AUTH_MAX_AGE_SECONDS: ${V2A_INSPECT_AUTH_MAX_AGE_SECONDS:-604800}
-
+      V2A_INSPECT_UI_SERVER_URL: http://inference:8080
+      V2A_INSPECT_CLIENT_SERVER_HOST: inference
+      V2A_INSPECT_CLIENT_SERVER_PORT: 8080
       V2A_INSPECT_CLIENT_TIMEOUT: ${V2A_INSPECT_CLIENT_TIMEOUT:-300}
+
 
       V2A_INSPECT_LLM_SMALL_MODEL: ${V2A_INSPECT_LLM_SMALL_MODEL:-gemini-3.1-flash-lite}
       V2A_INSPECT_LLM_MEDIUM_MODEL: ${V2A_INSPECT_LLM_MEDIUM_MODEL:-gemini-3.5-flash}
@@ -44,23 +89,11 @@ services:
       V2A_INSPECT_LANGFUSE_ENVIRONMENT: ${V2A_INSPECT_LANGFUSE_ENVIRONMENT:-prod}
       V2A_INSPECT_LANGFUSE_RELEASE: ${V2A_INSPECT_LANGFUSE_RELEASE:-}
 
-      V2A_INSPECT_VIDEO_ENCODE_USE_NVENC: ${V2A_INSPECT_VIDEO_ENCODE_USE_NVENC:-true}
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
-      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}
-
-    secrets:
-      - source: gemini_api_key
-        target: GEMINI_API_KEY
-      - source: langfuse_public_key
-        target: V2A_INSPECT_LANGFUSE_PUBLIC_KEY
-      - source: langfuse_secret_key
-        target: V2A_INSPECT_LANGFUSE_SECRET_KEY
-      - source: ui_password
-        target: V2A_INSPECT_UI_PASSWORD
-
+      V2A_INSPECT_AUTH_COOKIE: ${V2A_INSPECT_AUTH_COOKIE:-v2a_inspect_auth}
+      V2A_INSPECT_AUTH_MAX_AGE_SECONDS: ${V2A_INSPECT_AUTH_MAX_AGE_SECONDS:-604800}
+      V2A_INSPECT_VIDEO_ENCODE_USE_NVENC: ${V2A_INSPECT_VIDEO_ENCODE_USE_NVENC:-false}
     volumes:
       - v2a_inspect_data:/data
-
     healthcheck:
       test:
         [
@@ -76,13 +109,4 @@ services:
 
 volumes:
   v2a_inspect_data:
-
-secrets:
-  gemini_api_key:
-    file: ./secrets/gemini_api_key
-  langfuse_public_key:
-    file: ./secrets/langfuse_public_key
-  langfuse_secret_key:
-    file: ./secrets/langfuse_secret_key
-  ui_password:
-    file: ./secrets/ui_password
+  v2a_server_data:

@@ -40,6 +40,17 @@ Speech tracks use Kokoro TTS and require `spoken_text`. SFX and ambience default
 to text-to-audio; use V2A only for sounds that require precise synchronization
 with visible motion. Kokoro downloads its model on the first speech request.
 
+## Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+This starts both services: the UI on `http://127.0.0.1:8501` and the
+inference API on `http://127.0.0.1:8080`. Model files remain in the
+`v2a_server_data` volume across container restarts.
+
 ## Packages
 
 - `src/v2a_inspect/`: main CLI, agent pipeline, editor API, and inference clients.
