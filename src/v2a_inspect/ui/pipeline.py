@@ -23,6 +23,7 @@ from v2a_inspect.models import (
     VideoAsset,
 )
 from v2a_inspect.audio_generation.client import generate_audio_for_item
+from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.audio_generation.mix import (
     mix_audio_into_video,
     mix_audio_items_to_wav,
@@ -282,59 +283,32 @@ async def run_audio_generation_pipeline(
         event_dir.mkdir(parents=True, exist_ok=True)
         track_dir.mkdir(parents=True, exist_ok=True)
 
-        audio_plan = AudioPlan(total_duration=video_duration)
+        audio_plan = build_audio_plan(
+            timeline,
+            fps=fps,
+            total_duration=video_duration,
+        )
         track_map = {track.sound_track_id: track for track in timeline.sound_tracks}
+        event_map = {
+            str(event.sound_event_id): event for event in timeline.sound_events
+        }
         item_context: dict[str, tuple[object, object]] = {}
+        for item in audio_plan.items:
+            event = event_map.get(item.item_id)
+            track = track_map.get(event.sound_track_id) if event else None
+            if event and track:
+                item_context[item.item_id] = (event, track)
 
-        await store.touch(stage="uploading video to inference server")
-        async with VideoClient(base_url=server_url) as video_client:
-            try:
-                res = await video_client.upload(str(video_asset.source_path))
-                video_id = res.video_id
-            except Exception:
-                video_id = "dummy"
+        video_id: str | None = None
+        if any(item.generation_model == "v2a" for item in audio_plan.items):
+            await store.touch(stage="uploading video for V2A generation")
+            async with VideoClient(base_url=server_url) as video_client:
+                try:
+                    res = await video_client.upload(str(video_asset.source_path))
+                    video_id = res.video_id
+                except Exception:
+                    pass
 
-        for event in timeline.sound_events:
-            track = track_map.get(event.sound_track_id)
-            if not track:
-                continue
-
-            start_time = event.start_frame_index / fps
-            end_time = event.end_frame_index / fps
-            start_time = max(0.0, min(start_time, video_duration - 0.1))
-            end_time = max(0.0, min(end_time, video_duration))
-            if end_time <= start_time:
-                end_time = start_time + 0.1
-
-            source_label = ""
-            if track.sound_source_id:
-                for source in timeline.sound_sources:
-                    if source.sound_source_id == track.sound_source_id:
-                        source_label = source.label
-                        break
-
-            if source_label and source_label.lower() not in track.label.lower():
-                desc = f"{source_label}, [{track.label}] {event.description}"
-            else:
-                desc = f"[{track.label}] {event.description}"
-
-            gen_model = track.generation_model
-            vol = 1.5 if gen_model == "v2a" else 0.8 if gen_model == "t2a" else 1.0
-
-            item = AudioPlanItem(
-                item_id=str(event.sound_event_id),
-                type=track.track_type,
-                time=(start_time, end_time),
-                description=desc,
-                spoken_text=getattr(event, "spoken_text", None),
-                volume=vol,
-                track_id=str(track.sound_track_id),
-                generation_model=gen_model,
-            )
-            audio_plan.items.append(item)
-            item_context[item.item_id] = (event, track)
-
-        audio_plan.items.sort(key=lambda x: x.time[0])
         n_items = len(audio_plan.items)
 
         generated_audio: dict[str, str] = {}

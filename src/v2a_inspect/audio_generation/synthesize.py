@@ -24,7 +24,8 @@ from moviepy import VideoFileClip
 
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.mix import mix_audio_into_video
-from v2a_inspect.models import AudioPlan, AudioPlanItem, SoundTimeline, VideoAsset
+from v2a_inspect.audio_generation.plan import build_audio_plan
+from v2a_inspect.models import SoundTimeline, VideoAsset
 
 load_dotenv(override=True)
 
@@ -127,79 +128,34 @@ def synthesize(
     if not fps or fps <= 0:
         fps = 30.0
 
-    audio_plan = AudioPlan(total_duration=video_duration)
-
-    # Map track_id to SoundTrack for easy lookup
-    track_map = {track.sound_track_id: track for track in sound_timeline.sound_tracks}
-
-    typer.echo("[3/4] Uploading video to server for V2A generation...", err=True)
-    from v2a_inspect.client import VideoClient
-
-    async def _upload_video(vp: str) -> str:
-        async with VideoClient() as client:
-            res = await client.upload(vp)
-            return res.video_id
-
-    try:
-        video_id = asyncio.run(_upload_video(video_path))
-    except Exception as e:
-        typer.echo(
-            f"Warning: Could not upload video to server. V2A might fail. ({e})",
-            err=True,
-        )
-        video_id = "dummy"
-
-    for event in sound_timeline.sound_events:
-        track = track_map.get(event.sound_track_id)
-        if not track:
-            continue
-
-        start_time = event.start_frame_index / fps
-        end_time = event.end_frame_index / fps
-
-        # 클램핑: 시작 시간이 비디오 길이를 초과하지 않도록 보정 (ffmpeg 에러 방지)
-        start_time = max(0.0, min(start_time, video_duration - 0.1))
-        end_time = max(0.0, min(end_time, video_duration))
-
-        # Adjust end_time if it's less than or equal to start_time
-        if end_time <= start_time:
-            end_time = start_time + 0.1
-
-        source_label = ""
-        if track.sound_source_id:
-            for source in sound_timeline.sound_sources:
-                if source.sound_source_id == track.sound_source_id:
-                    source_label = source.label
-                    break
-
-        if source_label and source_label.lower() not in track.label.lower():
-            desc = f"{source_label}, [{track.label}] {event.description}"
-        else:
-            desc = f"[{track.label}] {event.description}"
-
-        gen_model = track.generation_model
-        vol = 1.5 if gen_model == "v2a" else 0.8 if gen_model == "t2a" else 1.0
-
-        item = AudioPlanItem(
-            item_id=str(event.sound_event_id),
-            type=track.track_type,
-            time=(start_time, end_time),
-            description=desc,
-            spoken_text=getattr(event, "spoken_text", None),
-            volume=vol,
-            track_id=str(track.sound_track_id),
-            generation_model=gen_model,
-        )
-        audio_plan.items.append(item)
-
-    audio_plan.items.sort(key=lambda x: x.time[0])
-
+    audio_plan = build_audio_plan(
+        sound_timeline,
+        fps=fps,
+        total_duration=video_duration,
+    )
     n_items = len(audio_plan.items)
     typer.echo(f"  → {n_items} audio events scheduled.", err=True)
 
     if n_items == 0:
         typer.echo("Warning: No audio items to generate.", err=True)
         return
+
+    video_id: str | None = None
+    if any(item.generation_model == "v2a" for item in audio_plan.items):
+        typer.echo("[3/4] Uploading video for V2A generation...", err=True)
+        from v2a_inspect.client import VideoClient
+
+        async def _upload_video(vp: str) -> str:
+            async with VideoClient() as client:
+                res = await client.upload(vp)
+                return res.video_id
+
+        try:
+            video_id = asyncio.run(_upload_video(video_path))
+        except Exception as e:
+            typer.echo(f"Warning: Could not upload video for V2A. ({e})", err=True)
+    else:
+        typer.echo("[3/4] No V2A events; skipping video upload.", err=True)
 
     typer.echo(f"[4/4] Generating {n_items} audio tracks...", err=True)
     audio_dir = Path(tempfile.mkdtemp(prefix="v2a_synth_audio_"))
