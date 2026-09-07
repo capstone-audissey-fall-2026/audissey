@@ -254,7 +254,7 @@ def timeline_rows(video_asset: VideoAsset) -> list[TableRow]:
                 "kind": row["track_type"],
                 "sound_event_id": row["sound_event_id"],
                 "sound_track_id": row["sound_track_id"],
-                "generation_mode": row["generation_mode"],
+                "generation_model": row["generation_model"],
             }
         )
     return rows
@@ -348,8 +348,9 @@ def _sound_event_row(
         "duration_sec": round(
             (event.end_frame_index - event.start_frame_index) / fps, 2
         ),
-        "generation_mode": track.generation_mode,
+        "generation_model": track.generation_model,
         "description": event.description,
+        "spoken_text": event.spoken_text,
         "notes": event.notes,
     }
 

@@ -177,17 +177,8 @@ def synthesize(
         else:
             desc = f"[{track.label}] {event.description}"
 
-        # Map generation mode (vta -> v2a, tta -> t2a)
-        gen_mode = track.generation_mode
-        vol = 1.0
-        if gen_mode == "vta":
-            gen_model = "v2a"
-            vol = 1.5  # VTA (비디오 기반)는 소리가 작으므로 볼륨을 키움
-        elif gen_mode == "tta":
-            gen_model = "t2a"
-            vol = 0.8  # TTA (텍스트 기반)는 기존 크기 유지
-        else:
-            gen_model = gen_mode
+        gen_model = track.generation_model
+        vol = 1.5 if gen_model == "v2a" else 0.8 if gen_model == "t2a" else 1.0
 
         item = AudioPlanItem(
             item_id=str(event.sound_event_id),

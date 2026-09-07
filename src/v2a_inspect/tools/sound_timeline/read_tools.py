@@ -398,7 +398,7 @@ class SoundTimelineReadTools:
                     query,
                     track.label,
                     track.track_type,
-                    track.generation_mode,
+                    track.generation_model,
                     track.canonical_key,
                     track.notes,
                 )
@@ -409,7 +409,7 @@ class SoundTimelineReadTools:
                     query,
                     track.label,
                     track.track_type,
-                    track.generation_mode,
+                    track.generation_model,
                     track.canonical_key,
                     track.notes,
                 ),

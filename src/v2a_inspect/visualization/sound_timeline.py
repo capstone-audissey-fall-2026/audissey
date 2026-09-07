@@ -11,13 +11,13 @@ from v2a_inspect.models import SoundEvent, SoundTrack, VideoAsset
 from .colors import Color
 
 _TRACK_COLORS: dict[str, Color] = {
-    "dialogue": (35, 120, 220),
+    "speech": (35, 120, 220),
     "sfx": (230, 85, 40),
     "music": (145, 70, 200),
     "ambience": (50, 160, 80),
 }
 _TRACK_ORDER: dict[str, int] = {
-    "dialogue": 0,
+    "speech": 0,
     "sfx": 1,
     "music": 2,
     "ambience": 3,
@@ -154,11 +154,12 @@ def summarize_sound_timeline(
                 "frame_count": frame_count,
                 "duration_sec": frame_count / video_asset.fps,
                 "description": event.description,
+                "spoken_text": event.spoken_text,
                 "sound_source_id": None
                 if track.sound_source_id is None
                 else str(track.sound_source_id),
                 "source_label": None if source is None else source.label,
-                "generation_mode": track.generation_mode,
+                "generation_model": track.generation_model,
             }
         )
     return rows
@@ -286,8 +287,8 @@ def _draw_legend(
         x += 92
 
 
-def _track_types() -> tuple[Literal["dialogue", "sfx", "music", "ambience"], ...]:
-    return ("dialogue", "sfx", "music", "ambience")
+def _track_types() -> tuple[Literal["speech", "sfx", "music", "ambience"], ...]:
+    return ("speech", "sfx", "music", "ambience")
 
 
 def _frame_to_x(

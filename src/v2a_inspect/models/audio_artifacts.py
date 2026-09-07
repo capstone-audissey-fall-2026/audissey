@@ -19,7 +19,7 @@ class SoundEventAudioArtifact(SchemaModel):
 class SoundTrackAudioArtifact(SchemaModel):
     sound_track_id: UUID
     track_label: str
-    track_type: Literal["dialogue", "sfx", "music", "ambience"]
+    track_type: Literal["speech", "sfx", "music", "ambience"]
     path: Path
     duration_sec: float
     event_count: int = Field(ge=0)

@@ -1,10 +1,17 @@
-from typing import Literal
+from __future__ import annotations
+
+import re
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 from typing_extensions import Self
 
 from .base import SchemaModel
+
+SoundTrackType = Literal["speech", "sfx", "music", "ambience"]
+SoundGenerationModel = Literal["t2a", "v2a", "tts"]
+SpokenText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class SoundSource(SchemaModel):
@@ -39,19 +46,46 @@ class SoundTrack(SchemaModel):
 
     sound_track_id: UUID = Field(default_factory=uuid4)
 
-    track_type: Literal["dialogue", "sfx", "music", "ambience"]
+    track_type: SoundTrackType
     label: str
     canonical_key: str | None = None
     sound_source_id: UUID | None = None
-    generation_mode: Literal["tta", "vta", "hybrid", "unknown"] = "unknown"
+    generation_model: SoundGenerationModel = "t2a"
 
     notes: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_values(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if data.get("track_type") == "dialogue":
+            data["track_type"] = "speech"
+
+        legacy_model = data.pop("generation_mode", None)
+        generation_model = data.get("generation_model", legacy_model)
+        if data.get("track_type") == "speech":
+            data["generation_model"] = "tts"
+        else:
+            data["generation_model"] = {
+                None: "t2a",
+                "tta": "t2a",
+                "vta": "v2a",
+                "hybrid": "t2a",
+                "unknown": "t2a",
+            }.get(generation_model, generation_model)
+        return data
+
+    @model_validator(mode="after")
+    def check_generation_model(self) -> Self:
+        if self.track_type != "speech" and self.generation_model == "tts":
+            raise ValueError("Only speech tracks may use tts")
+        return self
+
 
 class SoundEvent(SchemaModel):
-    """
-    One occurrence of a SoundTrack over a frame interval.
-    """
+    """One occurrence of a SoundTrack over a frame interval."""
 
     sound_event_id: UUID = Field(default_factory=uuid4)
     sound_track_id: UUID
@@ -60,6 +94,7 @@ class SoundEvent(SchemaModel):
     end_frame_index: int = Field(gt=0)
 
     description: str
+    spoken_text: SpokenText | None = None
     notes: str | None = None
 
 
@@ -76,6 +111,36 @@ class SoundTimeline(SchemaModel):
 
     notes: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_dialogue(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        legacy_speech_ids = {
+            str(track.get("sound_track_id"))
+            for track in data.get("sound_tracks", [])
+            if isinstance(track, dict) and track.get("track_type") == "dialogue"
+        }
+        if not legacy_speech_ids:
+            return data
+
+        events = []
+        for raw_event in data.get("sound_events", []):
+            if not isinstance(raw_event, dict):
+                events.append(raw_event)
+                continue
+            event = dict(raw_event)
+            if str(event.get("sound_track_id")) in legacy_speech_ids and not event.get(
+                "spoken_text"
+            ):
+                event["spoken_text"] = _extract_legacy_spoken_text(
+                    str(event.get("description", ""))
+                )
+            events.append(event)
+        data["sound_events"] = events
+        return data
+
     @model_validator(mode="after")
     def check_references(self) -> Self:
         source_ids = {source.sound_source_id for source in self.sound_sources}
@@ -86,9 +151,20 @@ class SoundTimeline(SchemaModel):
             ):
                 raise ValueError(f"Unknown sound_source_id: {track.sound_source_id}")
 
-        track_ids = {track.sound_track_id for track in self.sound_tracks}
+        track_by_id = {track.sound_track_id: track for track in self.sound_tracks}
         for event in self.sound_events:
-            if event.sound_track_id not in track_ids:
+            track = track_by_id.get(event.sound_track_id)
+            if track is None:
                 raise ValueError(f"Unknown sound_track_id: {event.sound_track_id}")
-
+            if track.track_type == "speech" and event.spoken_text is None:
+                raise ValueError("speech events require spoken_text")
+            if track.track_type != "speech" and event.spoken_text is not None:
+                raise ValueError("spoken_text is only valid for speech events")
         return self
+
+
+def _extract_legacy_spoken_text(description: str) -> str:
+    match = re.search(r"""["“]([^"”]+)["”]|['‘]([^'’]+)['’]""", description)
+    if match is None:
+        return description
+    return (match.group(1) or match.group(2)).strip()

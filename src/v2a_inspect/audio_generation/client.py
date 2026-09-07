@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import shutil
 
 import numpy as np
@@ -38,6 +37,7 @@ def generate_speech_kokoro(
 ) -> str:
     """Generate speech through the local Kokoro inference endpoint."""
     try:
+
         async def _generate() -> str:
             async with KokoroClient(base_url=server_url) as client:
                 return await client.generate_speech(
@@ -203,8 +203,9 @@ def generate_audio_for_item(
             generation_model = "tts"
 
         if generation_model == "tts":
-            text = spoken_text or _legacy_spoken_text(description)
-            return generate_speech_kokoro(text, out_path, duration, server_url)
+            if not spoken_text:
+                raise ValueError("TTS generation requires spoken_text")
+            return generate_speech_kokoro(spoken_text, out_path, duration, server_url)
 
         if generation_model == "v2a":
             if not video_id or not time:
@@ -229,10 +230,3 @@ def generate_audio_for_item(
     except Exception as exc:
         logger.error("Audio generation failed for '%s': %s", kind, exc)
         return None
-
-
-def _legacy_spoken_text(description: str) -> str:
-    match = re.search(r"""["“]([^"”]+)["”]|['‘]([^'’]+)['’]""", description)
-    if match is None:
-        return description
-    return (match.group(1) or match.group(2)).strip()

@@ -10,7 +10,7 @@ from .schemas import (
     DeleteSoundEventOutput,
     DeleteSoundSourceOutput,
     DeleteSoundTrackOutput,
-    SoundGenerationMode,
+    SoundGenerationModel,
     SoundSourceType,
     SoundTrackType,
 )
@@ -107,9 +107,11 @@ class SoundTimelineWriteTools:
         canonical_key: str | None = None,
         sound_track_id: UUID | None = None,
         sound_source_id: UUID | None = None,
-        generation_mode: SoundGenerationMode = "unknown",
+        generation_model: SoundGenerationModel = "t2a",
         notes: str | None = None,
     ) -> SoundTrack:
+        if track_type == "speech":
+            generation_model = "tts"
         with self.editor.lock:
             timeline = self.editor.ensure_sound_timeline()
             if sound_source_id is not None and not any(
@@ -125,7 +127,7 @@ class SoundTimelineWriteTools:
                     label=label,
                     canonical_key=canonical_key,
                     sound_source_id=sound_source_id,
-                    generation_mode=generation_mode,
+                    generation_model=generation_model,
                 )
                 if track is None:
                     track = SoundTrack(
@@ -134,7 +136,7 @@ class SoundTimelineWriteTools:
                         label=label,
                         canonical_key=_normalize_canonical_key(canonical_key),
                         sound_source_id=sound_source_id,
-                        generation_mode=generation_mode,
+                        generation_model=generation_model,
                         notes=notes,
                     )
                     tracks.append(track)
@@ -153,7 +155,7 @@ class SoundTimelineWriteTools:
                     label=label,
                     canonical_key=_normalize_canonical_key(canonical_key),
                     sound_source_id=sound_source_id,
-                    generation_mode=generation_mode,
+                    generation_model=generation_model,
                     notes=notes,
                 )
                 for index, existing in enumerate(tracks):
@@ -197,23 +199,34 @@ class SoundTimelineWriteTools:
         end_frame_index: int,
         description: str,
         sound_track_id: UUID,
+        spoken_text: str | None = None,
         sound_event_id: UUID | None = None,
         notes: str | None = None,
     ) -> SoundEvent:
         self.editor.check_frame_range(start_frame_index, end_frame_index)
         with self.editor.lock:
             timeline = self.editor.ensure_sound_timeline()
-            if not any(
-                track.sound_track_id == sound_track_id
-                for track in timeline.sound_tracks
-            ):
+            track = next(
+                (
+                    track
+                    for track in timeline.sound_tracks
+                    if track.sound_track_id == sound_track_id
+                ),
+                None,
+            )
+            if track is None:
                 raise ValueError(f"Unknown sound_track_id: {sound_track_id}")
+            if track.track_type == "speech" and not spoken_text:
+                raise ValueError("speech events require spoken_text")
+            if track.track_type != "speech" and spoken_text is not None:
+                raise ValueError("spoken_text is only valid for speech events")
             event = SoundEvent(
                 sound_event_id=sound_event_id or uuid4(),
                 sound_track_id=sound_track_id,
                 start_frame_index=start_frame_index,
                 end_frame_index=end_frame_index,
                 description=description,
+                spoken_text=spoken_text,
                 notes=notes,
             )
             events = list(timeline.sound_events)
@@ -274,7 +287,7 @@ def _find_matching_track(
     label: str,
     canonical_key: str | None,
     sound_source_id: UUID | None,
-    generation_mode: SoundGenerationMode,
+    generation_model: SoundGenerationModel,
 ) -> SoundTrack | None:
     normalized_key = _normalize_canonical_key(canonical_key)
     fallback_label = _normalize_text(label)
@@ -282,7 +295,7 @@ def _find_matching_track(
         if (
             track.track_type != track_type
             or track.sound_source_id != sound_source_id
-            or track.generation_mode != generation_mode
+            or track.generation_model != generation_model
         ):
             continue
         if normalized_key is not None:

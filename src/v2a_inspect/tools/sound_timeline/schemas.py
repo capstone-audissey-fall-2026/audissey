@@ -15,8 +15,8 @@ SoundSourceType = Literal[
     "offscreen_unknown",
     "non_diegetic",
 ]
-SoundTrackType = Literal["dialogue", "sfx", "music", "ambience"]
-SoundGenerationMode = Literal["tta", "vta", "hybrid", "unknown"]
+SoundTrackType = Literal["speech", "sfx", "music", "ambience"]
+SoundGenerationModel = Literal["t2a", "v2a", "tts"]
 FrameResolutionMode = Literal["low", "high"]
 
 
@@ -73,7 +73,7 @@ class UpsertSoundTrackArgs(SchemaModel):
     canonical_key: str | None = Field(default=None, min_length=1)
     sound_track_id: UUID | None = None
     sound_source_id: UUID | None = None
-    generation_mode: SoundGenerationMode = "unknown"
+    generation_model: SoundGenerationModel = "t2a"
     notes: str | None = None
 
 
@@ -86,6 +86,7 @@ class UpsertSoundEventArgs(SchemaModel):
     end_frame_index: int = Field(gt=0)
     description: str = Field(min_length=1)
     sound_track_id: UUID
+    spoken_text: str | None = Field(default=None, min_length=1)
     sound_event_id: UUID | None = None
     notes: str | None = None
 
@@ -337,7 +338,7 @@ class SoundTimelineViewOutput(SchemaModel):
                 source_label = _sound_source_label(track, self.sound_sources)
                 lines.append(
                     f"- {track.sound_track_id} {track.track_type} "
-                    f"mode={track.generation_mode}"
+                    f"model={track.generation_model}"
                     + (
                         ""
                         if track.canonical_key is None
@@ -355,10 +356,15 @@ class SoundTimelineViewOutput(SchemaModel):
                 lines.append(
                     f"- event {event_number}: {event.start_frame_index}-"
                     f"{event.end_frame_index} {track.track_type} "
-                    f"mode={track.generation_mode} "
+                    f"model={track.generation_model} "
                     f"track={track.label}"
                     + (f" source={source_label}" if source_label else "")
                     + f" description={event.description}"
+                    + (
+                        f" spoken_text={event.spoken_text}"
+                        if event.spoken_text is not None
+                        else ""
+                    )
                 )
         return "\n".join(lines)
 
@@ -418,7 +424,7 @@ class SoundTrackCatalogOutput(SchemaModel):
             )
             lines.append(
                 f"- id={track.sound_track_id} type={track.track_type}"
-                f"{canonical} mode={track.generation_mode} label={track.label}"
+                f"{canonical} model={track.generation_model} label={track.label}"
                 + (f" source={source_label}" if source_label else "")
             )
         return "\n".join(lines)

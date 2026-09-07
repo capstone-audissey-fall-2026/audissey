@@ -19,7 +19,7 @@ from .schemas import (
     FrameResolutionMode,
     ListScenesArgs,
     SceneIndexArgs,
-    SoundGenerationMode,
+    SoundGenerationModel,
     SoundSourceType,
     SoundTimelineArgs,
     SoundTrackType,
@@ -176,7 +176,7 @@ def _tool_string(value: object) -> str:
         )
         return _cap_tool_string(
             f"sound_track id={value.sound_track_id} "
-            f"type={value.track_type} mode={value.generation_mode}"
+            f"type={value.track_type} model={value.generation_model}"
             + (
                 ""
                 if value.canonical_key is None
@@ -195,6 +195,7 @@ def _sound_event_tool_string(event: SoundEvent) -> str:
         f"sound_event id={event.sound_event_id} track_id={event.sound_track_id} "
         f"frames={event.start_frame_index}-{event.end_frame_index} "
         f"description={event.description}"
+        + (f" spoken_text={event.spoken_text}" if event.spoken_text is not None else "")
     )
 
 
@@ -328,7 +329,7 @@ def _make_upsert_sound_track_tool(
         str | None,
         UUID | None,
         UUID | None,
-        SoundGenerationMode,
+        SoundGenerationModel,
         str | None,
     ],
     str,
@@ -339,7 +340,7 @@ def _make_upsert_sound_track_tool(
         canonical_key: str | None = None,
         sound_track_id: UUID | None = None,
         sound_source_id: UUID | None = None,
-        generation_mode: SoundGenerationMode = "unknown",
+        generation_model: SoundGenerationModel = "t2a",
         notes: str | None = None,
     ) -> str:
         return _tool_string(
@@ -349,7 +350,7 @@ def _make_upsert_sound_track_tool(
                 canonical_key=canonical_key,
                 sound_track_id=sound_track_id,
                 sound_source_id=sound_source_id,
-                generation_mode=generation_mode,
+                generation_model=generation_model,
                 notes=notes,
             )
         )
@@ -366,12 +367,13 @@ def _make_delete_sound_track_tool(editor: SoundTimelineEditor) -> Callable[[UUID
 
 def _make_upsert_sound_event_tool(
     editor: SoundTimelineEditor,
-) -> Callable[[int, int, str, UUID, UUID | None, str | None], str]:
+) -> Callable[[int, int, str, UUID, str | None, UUID | None, str | None], str]:
     def upsert_sound_event(
         start_frame_index: int,
         end_frame_index: int,
         description: str,
         sound_track_id: UUID,
+        spoken_text: str | None = None,
         sound_event_id: UUID | None = None,
         notes: str | None = None,
     ) -> str:
@@ -381,6 +383,7 @@ def _make_upsert_sound_event_tool(
                 end_frame_index=end_frame_index,
                 description=description,
                 sound_track_id=sound_track_id,
+                spoken_text=spoken_text,
                 sound_event_id=sound_event_id,
                 notes=notes,
             )

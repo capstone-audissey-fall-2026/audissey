@@ -23,7 +23,10 @@ from v2a_inspect.models import (
     VideoAsset,
 )
 from v2a_inspect.audio_generation.client import generate_audio_for_item
-from v2a_inspect.audio_generation.mix import mix_audio_into_video, mix_audio_items_to_wav
+from v2a_inspect.audio_generation.mix import (
+    mix_audio_into_video,
+    mix_audio_items_to_wav,
+)
 from v2a_inspect.preprocessing import (
     analyze_initial_scene,
     build_visual_identity_layer,
@@ -249,7 +252,6 @@ def _threadsafe_publish_callback(
     return publish
 
 
-
 async def run_audio_generation_pipeline(
     video_asset: VideoAsset,
     store: VideoAssetStore,
@@ -316,16 +318,8 @@ async def run_audio_generation_pipeline(
             else:
                 desc = f"[{track.label}] {event.description}"
 
-            gen_mode = track.generation_mode
-            vol = 1.0
-            if gen_mode == "vta":
-                gen_model = "v2a"
-                vol = 1.5
-            elif gen_mode == "tta":
-                gen_model = "t2a"
-                vol = 0.8
-            else:
-                gen_model = gen_mode
+            gen_model = track.generation_model
+            vol = 1.5 if gen_model == "v2a" else 0.8 if gen_model == "t2a" else 1.0
 
             item = AudioPlanItem(
                 item_id=str(event.sound_event_id),
@@ -408,7 +402,9 @@ async def run_audio_generation_pipeline(
             items = track_items.get(str(track.sound_track_id), [])
             if not items:
                 continue
-            track_path = _track_audio_path(track_dir, str(track.sound_track_id), track.label)
+            track_path = _track_audio_path(
+                track_dir, str(track.sound_track_id), track.label
+            )
             stem_path = await asyncio.to_thread(
                 mix_audio_items_to_wav,
                 items,
@@ -500,7 +496,7 @@ def _short_id(value: object) -> str:
 
 def _slug(value: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-_.").lower()
-    return (slug[:48] or "track")
+    return slug[:48] or "track"
 
 
 def _convert_audio_to_wav(input_path: Path, output_path: Path) -> Path | None:

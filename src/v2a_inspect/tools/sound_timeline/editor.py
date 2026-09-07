@@ -26,7 +26,7 @@ from .schemas import (
     ListTracksOutput,
     SceneSummaryOutput,
     SoundSourceCatalogOutput,
-    SoundGenerationMode,
+    SoundGenerationModel,
     SoundSourceType,
     SoundTimelineViewOutput,
     SoundTrackCatalogOutput,
@@ -140,7 +140,7 @@ class SoundTimelineEditor:
         canonical_key: str | None = None,
         sound_track_id: UUID | None = None,
         sound_source_id: UUID | None = None,
-        generation_mode: SoundGenerationMode = "unknown",
+        generation_model: SoundGenerationModel = "t2a",
         notes: str | None = None,
     ) -> SoundTrack:
         return self.write.upsert_sound_track(
@@ -149,7 +149,7 @@ class SoundTimelineEditor:
             canonical_key=canonical_key,
             sound_track_id=sound_track_id,
             sound_source_id=sound_source_id,
-            generation_mode=generation_mode,
+            generation_model=generation_model,
             notes=notes,
         )
 
@@ -162,6 +162,7 @@ class SoundTimelineEditor:
         end_frame_index: int,
         description: str,
         sound_track_id: UUID,
+        spoken_text: str | None = None,
         sound_event_id: UUID | None = None,
         notes: str | None = None,
     ) -> SoundEvent:
@@ -170,6 +171,7 @@ class SoundTimelineEditor:
             end_frame_index=end_frame_index,
             description=description,
             sound_track_id=sound_track_id,
+            spoken_text=spoken_text,
             sound_event_id=sound_event_id,
             notes=notes,
         )
