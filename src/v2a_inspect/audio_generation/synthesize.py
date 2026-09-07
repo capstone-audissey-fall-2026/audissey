@@ -194,6 +194,7 @@ def synthesize(
             type=track.track_type,
             time=(start_time, end_time),
             description=desc,
+            spoken_text=getattr(event, "spoken_text", None),
             volume=vol,
             track_id=str(track.sound_track_id),
             generation_model=gen_model,
@@ -229,6 +230,7 @@ def synthesize(
             fps=fps,
             time=item.time,
             generation_model=item.generation_model,
+            spoken_text=item.spoken_text,
         )
         if audio_file:
             generated_audio[item.item_id] = audio_file

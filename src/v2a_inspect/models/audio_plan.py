@@ -7,6 +7,7 @@ class AudioPlanItem(SchemaModel):
     type: str
     time: tuple[float, float]
     description: str
+    spoken_text: str | None = None
     volume: float = 0.8
     intensity: float = 0.5
     pan: float = 0.0

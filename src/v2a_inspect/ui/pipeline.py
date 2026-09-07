@@ -332,6 +332,7 @@ async def run_audio_generation_pipeline(
                 type=track.track_type,
                 time=(start_time, end_time),
                 description=desc,
+                spoken_text=getattr(event, "spoken_text", None),
                 volume=vol,
                 track_id=str(track.sound_track_id),
                 generation_model=gen_model,
@@ -365,6 +366,8 @@ async def run_audio_generation_pipeline(
                 fps=fps,
                 time=item.time,
                 generation_model=item.generation_model,
+                spoken_text=item.spoken_text,
+                server_url=server_url,
             )
             if not audio_file:
                 continue
