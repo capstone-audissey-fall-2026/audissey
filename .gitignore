@@ -309,7 +309,17 @@ cython_debug/
 
 # Local benchmark media and outputs
 data/
+.v2a_inspect/
 
 *.mp4
 *.webm
 *.mkv
+
+# Downloaded model assets and local input archives
+*.pth
+/HunyuanVideo-Foley/
+/server/HunyuanVideo-Foley/
+/configs/hunyuanvideo-foley-*.yaml
+/server/configs/hunyuanvideo-foley-*.yaml
+/assets/*.zip
+/videos/*.zip
