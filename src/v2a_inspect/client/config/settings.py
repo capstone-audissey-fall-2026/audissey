@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -12,8 +12,12 @@ class Settings(BaseSettings):
     def server_url(self) -> str:
         return f"http://{self.server_host}:{self.server_port}"
 
-    class Config:
-        env_prefix = "V2A_INSPECT_CLIENT_"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="V2A_INSPECT_CLIENT_",
+        extra="ignore",
+    )
 
 
 settings = Settings()

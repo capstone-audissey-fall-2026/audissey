@@ -19,15 +19,12 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dotenv import load_dotenv
 from moviepy import VideoFileClip
 
 from v2a_inspect.audio_generation.client import generate_audio_for_item
 from v2a_inspect.audio_generation.mix import mix_audio_into_video
 from v2a_inspect.audio_generation.plan import build_audio_plan
 from v2a_inspect.models import SoundTimeline, VideoAsset
-
-load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 

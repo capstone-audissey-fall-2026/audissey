@@ -248,7 +248,10 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
         env_prefix="V2A_INSPECT_",
+        extra="ignore",
         secrets_dir="/run/secrets" if os.path.exists("/run/secrets") else None,
     )
 

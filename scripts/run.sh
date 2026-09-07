@@ -1,24 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-INFERENCE_SERVER_URL=$2
-INPUT_DIR=${1:-.}
-WORK_DIR=${4:-$INPUT_DIR/work}
-OUTPUT_DIR=${3:-$INPUT_DIR/out}
+input_dir=$(realpath "${1:-.}")
+server_url=${2:-http://127.0.0.1:8080}
+output_dir=$(realpath -m "${3:-$input_dir/out}")
+work_dir=$(realpath -m "${4:-$input_dir/work}")
 
-INPUT_DIR="$(realpath $INPUT_DIR)"
-WORK_DIR="$(realpath $WORK_DIR)"
-OUTPUT_DIR="$(realpath $OUTPUT_DIR)"
+mkdir -p "$output_dir" "$work_dir"
+shopt -s nullglob
+videos=("$input_dir"/*.mp4)
+if ((${#videos[@]} == 0)); then
+    echo "No MP4 files found in $input_dir" >&2
+    exit 1
+fi
 
-mkdir -p "${OUTPUT_DIR}"
-mkdir -p "${WORK_DIR}"
-for file in "${INPUT_DIR}/"*.mp4 ; do
-	basename="$(basename $file)"
-	filename="${basename%%.*}"
-	wd="${WORK_DIR}/${filename}"
-	mkdir -p "${wd}"
-	uv run v2a-inspect run \
-		-o "$OUTPUT_DIR/$filename.json" \
-		--work-dir "${wd}" \
-		--server-url "${INFERENCE_SERVER_URL}" \
-		"${file}"
+for file in "${videos[@]}"; do
+    filename=$(basename "${file%.*}")
+    item_work_dir="$work_dir/$filename"
+    mkdir -p "$item_work_dir"
+    uv run v2a run \
+        --output "$output_dir/$filename.json" \
+        --work-dir "$item_work_dir" \
+        --server-url "$server_url" \
+        "$file"
 done

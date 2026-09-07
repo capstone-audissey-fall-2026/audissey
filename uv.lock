@@ -530,17 +530,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.9.9"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "python-dotenv" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/b7/545d2c10c1fc15e48653c91efde329a790f2eecfbbf2bd16003b5db2bab0/dotenv-0.9.9-py2.py3-none-any.whl", hash = "sha256:29cf74a087b31dafdb5a446b6d7e11cbce8ed2741540e2339c69fbef92c94ce9", size = 1892, upload-time = "2025-02-19T22:15:01.647Z" },
-]
-
-[[package]]
 name = "elevenlabs"
 version = "2.51.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3430,7 +3419,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
-    { name = "dotenv" },
     { name = "elevenlabs" },
     { name = "httpx" },
     { name = "langchain" },
@@ -3444,6 +3432,7 @@ dependencies = [
     { name = "pycocotools" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "scenedetect" },
     { name = "scipy" },
     { name = "typer" },
@@ -3471,7 +3460,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "av", specifier = ">=17.0.1" },
-    { name = "dotenv", specifier = ">=0.9.9" },
     { name = "elevenlabs", specifier = ">=2.51.0" },
     { name = "fastapi", marker = "extra == 'ui'", specifier = ">=0.136.1" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -3487,6 +3475,7 @@ requires-dist = [
     { name = "pycocotools", specifier = ">=2.0.11" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", marker = "extra == 'ui'", specifier = ">=0.0.28" },
     { name = "scenedetect", specifier = ">=0.7" },
     { name = "scipy", specifier = ">=1.17.1" },

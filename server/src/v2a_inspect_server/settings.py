@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ServerSettings(BaseSettings):
@@ -35,8 +35,12 @@ class ServerSettings(BaseSettings):
     kokoro_device: Literal["cpu", "cuda"] = "cpu"
     pytorch_cuda_alloc_conf: str = "expandable_segments:True"
 
-    class Config:
-        env_prefix = "V2A_SERVER_"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="V2A_SERVER_",
+        extra="ignore",
+    )
 
 
 settings = ServerSettings()
