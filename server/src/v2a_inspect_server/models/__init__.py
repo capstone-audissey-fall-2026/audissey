@@ -24,6 +24,7 @@ from .sam3 import (
     Sam3TrackVideoResponse,
 )
 from .hunyuan import HunyuanGenerateV2ARequest
+from .speech import KokoroGenerateSpeechRequest
 
 __all__ = [
     "DinoV2Embedding",
@@ -44,4 +45,5 @@ __all__ = [
     "Sam3TrackVideoRequest",
     "Sam3TrackVideoResponse",
     "HunyuanGenerateV2ARequest",
+    "KokoroGenerateSpeechRequest",
 ]

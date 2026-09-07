@@ -54,6 +54,7 @@ FROM base AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    espeak-ng \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 

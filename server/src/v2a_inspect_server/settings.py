@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
@@ -28,6 +29,10 @@ class ServerSettings(BaseSettings):
     hunyuan_model_id: str = "tencent/HunyuanVideo-Foley"
     hunyuan_model_size: str = "xl"
     hunyuan_enable_offload: bool = False
+    kokoro_model_id: str = "hexgrad/Kokoro-82M"
+    kokoro_language: str = "a"
+    kokoro_voice: str = "af_heart"
+    kokoro_device: Literal["cpu", "cuda"] = "cpu"
     pytorch_cuda_alloc_conf: str = "expandable_segments:True"
 
     class Config:

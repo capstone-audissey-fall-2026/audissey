@@ -35,6 +35,8 @@ dependencies = [
   "hunyuanvideo-foley @ git+https://github.com/Tencent-Hunyuan/HunyuanVideo-Foley.git",
   "torchcodec",
   "descript-audiotools",
+  "kokoro==0.9.4",
+  "soundfile>=0.13.1",
 ]
 
 [project.scripts]
