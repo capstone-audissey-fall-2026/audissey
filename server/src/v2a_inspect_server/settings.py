@@ -27,6 +27,7 @@ class ServerSettings(BaseSettings):
     label_model_id: str = "google/siglip2-base-patch16-224"
     enable_nvenc: bool = True
     hunyuan_model_id: str = "tencent/HunyuanVideo-Foley"
+    hunyuan_model_path: Path = Path("HunyuanVideo-Foley")
     hunyuan_model_size: str = "xl"
     hunyuan_enable_offload: bool = False
     kokoro_model_id: str = "hexgrad/Kokoro-82M"

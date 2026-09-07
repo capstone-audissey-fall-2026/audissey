@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import random
 import shutil
 import subprocess
@@ -19,9 +18,6 @@ from ..models.hunyuan import HunyuanGenerateV2ARequest
 
 logger = logging.getLogger("uvicorn.error")
 
-_TRUE_VALUES = {"1", "true", "yes", "y", "on"}
-_FALSE_VALUES = {"0", "false", "no", "n", "off"}
-
 try:
     import torch
     from hunyuanvideo_foley.utils.model_utils import load_model, denoise_process
@@ -30,32 +26,6 @@ try:
     HUNYUAN_AVAILABLE = True
 except ImportError:
     HUNYUAN_AVAILABLE = False
-
-
-def _parse_bool_env(name: str) -> bool | None:
-    value = os.environ.get(name)
-    if value is None:
-        return None
-
-    normalized = value.strip().lower()
-    if normalized in _TRUE_VALUES:
-        return True
-    if normalized in _FALSE_VALUES:
-        return False
-
-    logger.warning(
-        "Ignoring invalid boolean value for %s=%r; using server settings.",
-        name,
-        value,
-    )
-    return None
-
-
-def _resolve_hunyuan_offload() -> bool:
-    legacy_override = _parse_bool_env("HUNYUAN_ENABLE_OFFLOAD")
-    if legacy_override is not None:
-        return legacy_override
-    return settings.hunyuan_enable_offload
 
 
 def _is_cuda_oom(exc: Exception) -> bool:
@@ -74,68 +44,42 @@ class HunyuanInferenceClient:
             return
 
         logger.info("Initializing HunyuanVideo-Foley model...")
-        model_path = os.environ.get("HUNYUAN_MODEL_PATH", "HunyuanVideo-Foley")
-        model_size = os.environ.get("HUNYUAN_MODEL_SIZE", settings.hunyuan_model_size)
+        model_path = settings.hunyuan_model_path
+        model_size = settings.hunyuan_model_size
 
-        # Auto-download the weights using huggingface_hub if not found locally
-        required_weights = [
+        config_filename = "config_xl.yaml" if model_size == "xl" else "config.yaml"
+        required_files = [
             f"hunyuanvideo_foley_{model_size}.pth",
             "vae_128d_48k.pth",
             "synchformer_state_dict.pth",
+            config_filename,
         ]
+        for filename in required_files:
+            if (model_path / filename).exists():
+                continue
+            logger.info(
+                "Downloading %s from %s to %s.",
+                filename,
+                settings.hunyuan_model_id,
+                model_path,
+            )
+            try:
+                import huggingface_hub
 
-        for weight_file in required_weights:
-            if not (Path(model_path) / weight_file).exists():
-                logger.info(
-                    f"Weights not found locally. Downloading {weight_file} from HuggingFace to {model_path}..."
+                huggingface_hub.hf_hub_download(
+                    repo_id=settings.hunyuan_model_id,
+                    filename=filename,
+                    local_dir=model_path,
                 )
-                try:
-                    import huggingface_hub
+            except Exception as exc:
+                logger.error("Failed to download %s: %s", filename, exc)
 
-                    Path(model_path).mkdir(parents=True, exist_ok=True)
-                    huggingface_hub.hf_hub_download(
-                        repo_id="tencent/HunyuanVideo-Foley",
-                        filename=weight_file,
-                        local_dir=model_path,
-                    )
-                    logger.info(f"{weight_file} downloaded successfully.")
-                except Exception as e:
-                    logger.error(
-                        f"Failed to download {weight_file} from HuggingFace: {e}"
-                    )
-        enable_offload = _resolve_hunyuan_offload()
+        enable_offload = settings.hunyuan_enable_offload
         logger.info(
             "Hunyuan offload %s.",
             "enabled" if enable_offload else "disabled",
         )
-
-        import urllib.request
-        import hunyuanvideo_foley
-
-        pkg_dir = Path(hunyuanvideo_foley.__file__).parent
-
-        # Hunyuan load_model is very strict about where it finds the configs.
-        # We aggressively place the downloaded config in all possible locations it might check.
-        target_paths = [
-            Path.cwd() / f"configs/hunyuanvideo-foley-{model_size}.yaml",
-            pkg_dir / "configs" / f"hunyuanvideo-foley-{model_size}.yaml",
-            pkg_dir.parent / "configs" / f"hunyuanvideo-foley-{model_size}.yaml",
-            Path(model_path) / f"configs/hunyuanvideo-foley-{model_size}.yaml",
-        ]
-
-        url = f"https://raw.githubusercontent.com/Tencent-Hunyuan/HunyuanVideo-Foley/main/configs/hunyuanvideo-foley-{model_size}.yaml"
-
-        for p in target_paths:
-            if not p.exists():
-                try:
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    urllib.request.urlretrieve(url, str(p))
-                    print(f"✅ [Hunyuan Fix] Downloaded config to: {p}")
-                except Exception as e:
-                    print(f"❌ [Hunyuan Fix] Failed to write config to {p}: {e}")
-
-        # Use the absolute path from CWD for the explicit argument
-        config_path_str = str(target_paths[0].resolve())
+        config_path = (model_path / config_filename).resolve()
 
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
         device_idx = 0
@@ -146,8 +90,8 @@ class HunyuanInferenceClient:
         try:
             with torch.cuda.device(device_idx):
                 self.model_dict, self.cfg = load_model(
-                    model_path=model_path,
-                    config_path=config_path_str,
+                    model_path=str(model_path.resolve()),
+                    config_path=str(config_path),
                     device=torch.device(device_name),
                     enable_offload=enable_offload,
                     model_size=model_size,

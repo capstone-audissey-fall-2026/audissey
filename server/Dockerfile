@@ -12,6 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     V2A_SERVER_HOST=0.0.0.0 \
     V2A_SERVER_PORT=8080 \
     V2A_SERVER_UPLOAD_DIR=/data/uploads \
+    V2A_SERVER_HUNYUAN_MODEL_PATH=/data/model-cache/hunyuan \
     HF_HOME=/data/model-cache/huggingface \
     TRANSFORMERS_CACHE=/data/model-cache/transformers \
     NVIDIA_VISIBLE_DEVICES=all \
