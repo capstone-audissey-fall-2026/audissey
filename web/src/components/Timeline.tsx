@@ -330,7 +330,6 @@ export default function Timeline({
             <option value="sfx">sfx</option>
             <option value="ambience">ambience</option>
             <option value="speech">speech</option>
-            <option value="music">music</option>
           </select>
           <input
             value={trackLabel}

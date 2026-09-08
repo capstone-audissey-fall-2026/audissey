@@ -52,7 +52,7 @@ range except global source/track catalog searches.
 - Set one explicit generation_model per SoundTrack: t2a, v2a, or tts.
 - Speech tracks always use tts and every speech SoundEvent must include the
   exact spoken_text. Keep description as the acoustic/voice direction.
-- Default sfx, ambience, and music to t2a.
+- Default sfx and ambience to t2a.
 - Use v2a only when precise visible timing is essential to the generated sound,
   such as an on-screen impact or contact. Timing alone does not require v2a.
 - If one acoustic identity needs different models, split it into separate tracks.
@@ -61,10 +61,10 @@ range except global source/track catalog searches.
   drop, cloth snap, armor jolt, breath, grunt, vocal effort.
 - Do not summarize visible repeated beats as "multiple", "repeated", "several",
   or broad "fighting sounds".
-- Longer ranges are only for continuous ambience, music, speech, sustained
+- Longer ranges are only for continuous ambience, speech, sustained
   scrape, or continuous movement.
 - Source types: `scene_global` ambience, `offscreen_unknown` implied/offscreen
-  diegetic, `non_diegetic` music/score.
+  diegetic, `non_diegetic` narration/voice-over.
 - Use short notes for evidence/rationale. If uncertain after bounded evidence,
   write best-effort events with `generation_model="t2a"` and notes.
 
@@ -81,7 +81,7 @@ range except global source/track catalog searches.
 - Provide stable snake_case `canonical_key` when creating SoundTracks, e.g.
   `weapon_metal_impact`, `weapon_swing_whoosh`, `footstep_boot`,
   `cloth_movement`, `body_impact`, `breath_exertion`, `speech_voice`,
-  `room_tone`, `score_music`.
+  `room_tone`.
 
 # Examples
 

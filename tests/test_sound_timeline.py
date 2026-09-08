@@ -6,9 +6,15 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from v2a_inspect.models import SoundEvent, SoundTimeline, SoundTrack
+from v2a_inspect.tools.sound_timeline.schemas import UpsertSoundTrackArgs
 
 
 class SoundTimelineTest(unittest.TestCase):
+    def test_music_track_type_is_rejected(self) -> None:
+        for model in (SoundTrack, UpsertSoundTrackArgs):
+            with self.subTest(model=model.__name__), self.assertRaises(ValidationError):
+                model.model_validate({"track_type": "music", "label": "Score"})
+
     def test_legacy_dialogue_is_migrated(self) -> None:
         speech_id = uuid4()
         sfx_id = uuid4()

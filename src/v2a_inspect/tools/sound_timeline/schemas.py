@@ -15,7 +15,7 @@ SoundSourceType = Literal[
     "offscreen_unknown",
     "non_diegetic",
 ]
-SoundTrackType = Literal["speech", "sfx", "music", "ambience"]
+SoundTrackType = Literal["speech", "sfx", "ambience"]
 SoundGenerationModel = Literal["t2a", "v2a", "tts"]
 FrameResolutionMode = Literal["low", "high"]
 

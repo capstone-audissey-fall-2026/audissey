@@ -3,7 +3,7 @@
 
 - Kokoro: Speech 오디오 생성
 - HunyuanVideo-Foley: 영상 동기화가 필요한 V2A 생성
-- ElevenLabs: SFX / Ambience / Music T2A 생성
+- ElevenLabs: SFX / Ambience T2A 생성
 - Dummy: 생성 실패 시 fallback
 
 환경 변수:
@@ -79,41 +79,6 @@ def generate_sfx_elevenlabs(
         return out_path
     except Exception as e:
         logger.error("ElevenLabs SFX generation failed: %s", e)
-        return generate_dummy_audio(duration or 1.0, out_path)
-
-
-# ── ElevenLabs Music ──────────────────────────────────────────────────────────
-
-
-def generate_music_elevenlabs(
-    text: str, out_path: str, duration: float | None = None
-) -> str:
-    """Generate background music using ElevenLabs API."""
-    api_key = get_settings().elevenlabs_api_key
-    if api_key is None:
-        logger.warning("ELEVENLABS_API_KEY not found. Falling back to dummy audio.")
-        return generate_dummy_audio(duration or 1.0, out_path)
-
-    try:
-        client = ElevenLabs(api_key=api_key.get_secret_value())
-        dur_ms = int(min(max(duration, 3.0), 30.0) * 1000) if duration else 10000
-
-        audio_generator = client.music.compose(
-            prompt=text,
-            music_length_ms=dur_ms,
-        )
-
-        with open(out_path, "wb") as f:
-            for chunk in audio_generator:
-                f.write(chunk)
-        return out_path
-    except Exception as e:
-        if "paid_plan_required" in str(e) or "402" in str(e):
-            logger.error(
-                "ElevenLabs Music API requires a paid plan. Falling back to dummy audio."
-            )
-        else:
-            logger.error("ElevenLabs Music generation failed: %s", e)
         return generate_dummy_audio(duration or 1.0, out_path)
 
 
@@ -224,8 +189,6 @@ def generate_audio_for_item(
             raise ValueError(f"Unsupported generation model: {generation_model}")
         if kind in ("sfx", "ambience"):
             return generate_sfx_elevenlabs(description, out_path, duration=duration)
-        if kind == "music":
-            return generate_music_elevenlabs(description, out_path, duration=duration)
         raise ValueError(f"Unsupported sound type for T2A: {kind}")
     except Exception as exc:
         logger.error("Audio generation failed for '%s': %s", kind, exc)

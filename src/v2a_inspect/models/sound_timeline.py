@@ -9,7 +9,7 @@ from typing_extensions import Self
 
 from .base import SchemaModel
 
-SoundTrackType = Literal["speech", "sfx", "music", "ambience"]
+SoundTrackType = Literal["speech", "sfx", "ambience"]
 SoundGenerationModel = Literal["t2a", "v2a", "tts"]
 SpokenText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 

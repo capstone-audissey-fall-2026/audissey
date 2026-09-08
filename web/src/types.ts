@@ -1,6 +1,6 @@
 export type RunStatus = "idle" | "running" | "complete" | "failed";
 
-export type SoundTrackType = "speech" | "sfx" | "music" | "ambience";
+export type SoundTrackType = "speech" | "sfx" | "ambience";
 export type GenerationModel = "t2a" | "v2a" | "tts";
 
 export interface AssetResponse {

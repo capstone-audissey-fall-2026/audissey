@@ -13,14 +13,12 @@ from .colors import Color
 _TRACK_COLORS: dict[str, Color] = {
     "speech": (35, 120, 220),
     "sfx": (230, 85, 40),
-    "music": (145, 70, 200),
     "ambience": (50, 160, 80),
 }
 _TRACK_ORDER: dict[str, int] = {
     "speech": 0,
     "sfx": 1,
-    "music": 2,
-    "ambience": 3,
+    "ambience": 2,
 }
 _SCENE_BOUNDARY_COLOR: Color = (225, 225, 225)
 _TEXT_COLOR: Color = (25, 25, 25)
@@ -287,8 +285,8 @@ def _draw_legend(
         x += 92
 
 
-def _track_types() -> tuple[Literal["speech", "sfx", "music", "ambience"], ...]:
-    return ("speech", "sfx", "music", "ambience")
+def _track_types() -> tuple[Literal["speech", "sfx", "ambience"], ...]:
+    return ("speech", "sfx", "ambience")
 
 
 def _frame_to_x(
