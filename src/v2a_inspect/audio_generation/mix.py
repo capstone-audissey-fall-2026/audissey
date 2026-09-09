@@ -123,7 +123,11 @@ def mix_audio_into_video(
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         logger.info("Writing mixed video: %s (%d tracks)", output_path, n_mixed)
         video.write_videofile(
-            output_path, audio_codec="aac", fps=video.fps, logger=None
+            output_path,
+            audio_codec="aac",
+            fps=video.fps,
+            temp_audiofile_path=str(Path(output_path).parent),
+            logger=None,
         )
 
         # 리소스 정리
