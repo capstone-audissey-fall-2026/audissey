@@ -739,6 +739,9 @@ function groupRows(
 ): LaneGroup[] {
   const lanes = new Map<string, TimelineRow[]>();
   for (const row of rows) {
+    if (rowKind(row) === "sound") {
+      continue;
+    }
     if (!lanes.has(row.lane)) {
       lanes.set(row.lane, []);
     }
@@ -753,6 +756,15 @@ function groupRows(
     if (!lanes.has(lane)) {
       lanes.set(lane, []);
     }
+  }
+  for (const row of rows) {
+    if (rowKind(row) !== "sound") {
+      continue;
+    }
+    if (!lanes.has(row.lane)) {
+      lanes.set(row.lane, []);
+    }
+    lanes.get(row.lane)?.push(row);
   }
   return [...lanes.entries()].map(([lane, laneRows]) => {
     const packedRows = packLaneRows(laneRows);

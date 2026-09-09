@@ -484,6 +484,14 @@ export default function VideoEditor({
   }
 
   function deleteSoundEvent(soundEventId: string) {
+    const row = timelineRows.find((item) => item.sound_event_id === soundEventId);
+    if (
+      !window.confirm(
+        `Delete sound event "${row?.label ?? soundEventId}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
     setDraftAsset((currentAsset) => {
       if (!currentAsset?.sound_timeline) {
         return currentAsset;
