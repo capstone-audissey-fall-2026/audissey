@@ -50,9 +50,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-This starts both services: the UI on `http://127.0.0.1:8501` and the
-inference API on `http://127.0.0.1:8080`. Model files remain in the
-`v2a_server_data` volume across container restarts.
+This starts both services with the UI available only on
+`http://127.0.0.1:8501`. The inference API is reachable only by the UI on the
+private Compose network. Set `V2A_DOCKER_UID` and `V2A_DOCKER_GID` in `.env`
+to `id -u` and `id -g`; the inference process then runs as that host user.
+Model files remain in the `v2a_server_data` volume across container restarts.
 
 ## Packages
 

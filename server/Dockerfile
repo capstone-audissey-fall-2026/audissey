@@ -59,9 +59,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+ARG APP_UID=1000
+ARG APP_GID=1000
+
+RUN groupadd --gid "${APP_GID}" appuser \
+    && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --shell /bin/bash appuser \
+    && mkdir -p /data \
+    && chown appuser:appuser /data
+
 COPY --from=builder /app /app
+
+ADD --checksum=sha256:80461bd19c1f7bc1213445eba48aa69554e4b0230c57d3acc80625d2e2519dce --chown=appuser:appuser --chmod=0644 \
+    https://raw.githubusercontent.com/facebookresearch/Motionformer/bf43d50/configs/SSV2/divided_224_16x4.yaml \
+    /app/server/.venv/lib/python3.12/site-packages/hunyuanvideo_foley/models/synchformer/divided_224_16x4.yaml
 
 EXPOSE 8080
 VOLUME ["/data"]
+
+USER appuser
 
 CMD ["v2a-inspect-server", "serve"]

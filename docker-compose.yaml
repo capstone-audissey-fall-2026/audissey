@@ -3,14 +3,15 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+      args:
+        APP_UID: ${V2A_DOCKER_UID:-1000}
+        APP_GID: ${V2A_DOCKER_GID:-1000}
     image: ${V2A_INSPECT_SERVER_IMAGE:-v2a-inspect-server:local}
     restart: unless-stopped
     env_file:
       - path: .env
         required: false
     gpus: all
-    ports:
-      - "${V2A_INSPECT_INFERENCE_PORT:-8080}:8080"
     environment:
       V2A_SERVER_HOST: 0.0.0.0
       V2A_SERVER_PORT: 8080
@@ -54,7 +55,7 @@ services:
       inference:
         condition: service_started
     ports:
-      - "${V2A_INSPECT_UI_PORT:-8501}:8501"
+      - "127.0.0.1:${V2A_INSPECT_UI_PORT:-8501}:8501"
     environment:
       V2A_INSPECT_UI_HOST: 0.0.0.0
       V2A_INSPECT_UI_PORT: 8501
