@@ -22,8 +22,6 @@ and cache options are documented in the root `.env.example`.
 - `POST /videos/upload`
 - `POST /infer/sam3/track-video`
 - `POST /infer/sam3/segment-image`
-- `POST /infer/dinov2/embed-images`
-- `POST /infer/score`
 - `POST /infer/hunyuan/generate-v2a`
 - `POST /infer/kokoro/generate-speech`
 

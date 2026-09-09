@@ -23,8 +23,6 @@ class ServerSettings(BaseSettings):
     opencv_hw_acceleration: bool = True
     opencv_hw_device: int | None = None
     opencv_ffmpeg_capture_options: str | None = "hw_decoders_any;cuda"
-    embedding_model_id: str = "facebook/dinov2-base"
-    label_model_id: str = "google/siglip2-base-patch16-224"
     enable_nvenc: bool = True
     hunyuan_model_id: str = "tencent/HunyuanVideo-Foley"
     hunyuan_model_path: Path = Path("HunyuanVideo-Foley")
