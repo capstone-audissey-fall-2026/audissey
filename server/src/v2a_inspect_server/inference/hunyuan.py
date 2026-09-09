@@ -81,11 +81,8 @@ class HunyuanInferenceClient:
         )
         config_path = (model_path / config_filename).resolve()
 
-        device_name = "cuda" if torch.cuda.is_available() else "cpu"
+        device_name = "cuda:0" if torch.cuda.is_available() else "cpu"
         device_idx = 0
-        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-            device_name = "cuda:1"
-            device_idx = 1
 
         try:
             with torch.cuda.device(device_idx):
@@ -381,11 +378,7 @@ class HunyuanInferenceClient:
     ) -> tuple[torch.Tensor, int]:
         self._set_manual_seed(42)
 
-        device_idx = (
-            1 if (torch.cuda.is_available() and torch.cuda.device_count() > 1) else 0
-        )
-
-        with torch.cuda.device(device_idx):
+        with torch.cuda.device(0):
             visual_feats, text_feats, audio_len_in_s = feature_process(
                 video_path, prompt, self.model_dict, self.cfg, neg_prompt=neg_prompt
             )

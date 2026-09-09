@@ -54,13 +54,15 @@ This starts both services with the UI available only on
 `http://127.0.0.1:8501`. The inference API is reachable only by the UI on the
 private Compose network. Set `V2A_DOCKER_UID` and `V2A_DOCKER_GID` in `.env`
 to `id -u` and `id -g`; the inference process then runs as that host user.
+Set `V2A_GPU_DEVICE` to the physical GPU index assigned to the inference
+container. Only that GPU is exposed, and all CUDA models use it as `cuda:0`.
 Model files remain in the `v2a_server_data` volume across container restarts.
 
 ## Packages
 
 - `src/v2a_inspect/`: main CLI, agent pipeline, editor API, and inference clients.
 - `web/`: React timeline editor.
-- `server/`: GPU inference API for SAM3, embeddings, Hunyuan V2A, and Kokoro TTS.
+- `server/`: GPU inference API for SAM3, Hunyuan V2A, and Kokoro TTS.
 - `tests/` and `server/tests/`: lightweight regression tests.
 - `scripts/run.sh`: batch wrapper around `v2a run`.
 

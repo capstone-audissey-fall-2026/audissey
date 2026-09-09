@@ -15,7 +15,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     V2A_SERVER_HUNYUAN_MODEL_PATH=/data/model-cache/hunyuan \
     HF_HOME=/data/model-cache/huggingface \
     TRANSFORMERS_CACHE=/data/model-cache/transformers \
-    NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
 WORKDIR /app/server
