@@ -22,12 +22,15 @@ uv sync --project server
 ```
 
 Add a Gemini API key to `.env`, then start the inference server and UI in
-separate terminals:
+the repository-owned virtual environments with one command:
 
 ```bash
-uv run --project server v2a-inspect-server serve
-uv run v2a ui
+./scripts/start-local.sh
 ```
+
+This runs both processes as the invoking host user, using `.venv` for the UI
+and `server/.venv` for GPU inference. Press `Ctrl+C` to stop both. Docker
+containers use image-local environments instead of these host environments.
 
 Open `http://127.0.0.1:8501`. The UI flow is:
 
