@@ -20,6 +20,7 @@ interface VideoEditorProps {
   submitError: string | null;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onImport: (event: FormEvent<HTMLFormElement>) => void;
+  onClean: () => Promise<void> | void;
   onResetSoundTimeline: () => void;
   onGenerateAudio?: (event: FormEvent<HTMLFormElement>, draftAsset: VideoAsset | null) => Promise<void> | void;
 }
@@ -29,6 +30,7 @@ export default function VideoEditor({
   submitError,
   onSubmit,
   onImport,
+  onClean,
   onResetSoundTimeline,
   onGenerateAudio,
 }: VideoEditorProps) {
@@ -603,6 +605,30 @@ export default function VideoEditor({
     }
   }
 
+  async function cleanWorkspace() {
+    if (
+      !window.confirm(
+        "Clean the current video and generated records from this UI workspace?",
+      )
+    ) {
+      return;
+    }
+    stopPreviewAudio(true);
+    try {
+      await onClean();
+    } catch {
+      return;
+    }
+    setFrame(0);
+    setTrackWindow(null);
+    setTimelineRows([]);
+    setBaseAsset(null);
+    setDraftAsset(null);
+    setEditingEventId(null);
+    setHasTimelineEdits(false);
+    setExportStatus("Cleaned workspace.");
+  }
+
   return (
     <main className="editor-shell">
       <header className="topbar">
@@ -692,6 +718,14 @@ export default function VideoEditor({
           {submitError ? <p className="error">{submitError}</p> : null}
           {state.error ? <p className="error">{state.error}</p> : null}
           <section className="export-panel">
+            <button
+              className="toggle danger"
+              disabled={state.status === "running" || (!video && !draftAsset)}
+              onClick={cleanWorkspace}
+              type="button"
+            >
+              Clean workspace
+            </button>
             <button
               className="toggle"
               disabled={!video || state.status === "running"}
@@ -859,6 +893,7 @@ export default function VideoEditor({
               </label>
             </div>
             <Inspector
+              asset={draftAsset ?? baseAsset}
               video={video}
               frame={selectedFrame}
               timelineRows={timelineRows}

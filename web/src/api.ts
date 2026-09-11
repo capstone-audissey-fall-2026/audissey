@@ -23,6 +23,16 @@ export async function fetchAssetForExport(): Promise<VideoAsset | null> {
   return payload.asset;
 }
 
+export async function cleanAsset(): Promise<void> {
+  const response = await fetch("/api/asset/clean", {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to clean asset: ${response.status}`);
+  }
+}
+
 export async function fetchCurrentFrame(
   frame: number,
   signal?: AbortSignal,

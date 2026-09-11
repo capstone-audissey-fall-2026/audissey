@@ -6,13 +6,21 @@ import type {
   SoundEventFrameRow,
   TimelineRow,
   TrackFrameRow,
+  VideoAsset,
   VideoSummary,
   VisualEventFrameRow,
 } from "../types";
 
-type InspectorTab = "scene" | "tracks" | "visual" | "sound";
+type InspectorTab = "keyframes" | "scene" | "tracks" | "visual" | "sound";
+type KeyframeDetailRow = {
+  scene: number;
+  keyframe_id: string;
+  frame_index: number;
+  time_sec: number;
+};
 
 interface InspectorProps {
+  asset: VideoAsset | null;
   video: VideoSummary | null;
   frame: number;
   timelineRows: TimelineRow[];
@@ -20,13 +28,15 @@ interface InspectorProps {
 }
 
 const tabs: { id: InspectorTab; label: string }[] = [
+  { id: "keyframes", label: "Key Frame" },
   { id: "scene", label: "Scene" },
-  { id: "tracks", label: "Tracks" },
-  { id: "visual", label: "Visual" },
+  { id: "tracks", label: "Object" },
+  { id: "visual", label: "Event" },
   { id: "sound", label: "Sound" },
 ];
 
 export default function Inspector({
+  asset,
   video,
   frame,
   timelineRows,
@@ -36,6 +46,7 @@ export default function Inspector({
   const [activeTab, setActiveTab] = useState<InspectorTab>("scene");
   const sceneRow = activeSceneRow(timelineRows, frame, video?.fps ?? 30);
   const soundRows = activeSoundEventRows(timelineRows, frame, video?.fps ?? 30);
+  const keyframes = activeKeyframeRows(asset, frame, video?.fps ?? 30);
 
   useEffect(() => {
     if (!video) {
@@ -75,6 +86,9 @@ export default function Inspector({
             ))}
           </div>
           <div className="inspector-body">
+            {activeTab === "keyframes" ? (
+              <KeyframeDetails rows={keyframes} version={version} />
+            ) : null}
             {activeTab === "scene" ? (
               <SceneDetails row={sceneRow ?? rows?.scene ?? null} />
             ) : null}
@@ -93,6 +107,60 @@ export default function Inspector({
         <p className="muted">No asset loaded.</p>
       )}
     </aside>
+  );
+}
+
+function activeKeyframeRows(
+  asset: VideoAsset | null,
+  frame: number,
+  fps: number,
+): KeyframeDetailRow[] {
+  const scenes = asset?.initial_scenes ?? [];
+  const sceneIndex = scenes.findIndex(
+    (scene) =>
+      scene.start_frame_index <= frame && frame < scene.end_frame_index,
+  );
+  const scene = scenes[sceneIndex];
+  if (!scene) {
+    return [];
+  }
+  return [...scene.keyframes]
+    .sort((left, right) => left.frame_index - right.frame_index)
+    .map((keyframe) => ({
+      scene: sceneIndex,
+      keyframe_id: keyframe.keyframe_id,
+      frame_index: keyframe.frame_index,
+      time_sec: Number((keyframe.frame_index / fps).toFixed(2)),
+    }));
+}
+
+function KeyframeDetails({
+  rows,
+  version,
+}: {
+  rows: KeyframeDetailRow[];
+  version: number;
+}) {
+  if (rows.length === 0) {
+    return <p className="empty-detail">No keyframes for this scene.</p>;
+  }
+  return (
+    <div className="keyframe-list">
+      {rows.map((row) => (
+        <article className="keyframe-card" key={row.keyframe_id}>
+          <img
+            alt={`Scene ${row.scene} keyframe at frame ${row.frame_index}`}
+            loading="lazy"
+            src={`/api/keyframes/${row.keyframe_id}?version=${version}`}
+          />
+          <dl className="keyframe-meta">
+            <Field label="Scene" value={row.scene} />
+            <Field label="Frame" value={row.frame_index} />
+            <Field label="Time" value={`${row.time_sec}s`} />
+          </dl>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -142,7 +210,7 @@ function SceneDetails({ row }: { row: SceneFrameRow | null }) {
 
 function TrackDetails({ rows }: { rows: TrackFrameRow[] }) {
   if (rows.length === 0) {
-    return <p className="empty-detail">No active tracks.</p>;
+    return <p className="empty-detail">No active objects.</p>;
   }
   return (
     <div className="detail-list">
@@ -154,7 +222,7 @@ function TrackDetails({ rows }: { rows: TrackFrameRow[] }) {
           </div>
           <dl className="detail-grid">
             <Field label="Scene" value={row.scene} />
-            <Field label="Track" value={row.track} />
+            <Field label="Object" value={row.track} />
             <Field label="Bbox" value={formatBbox(row.bbox)} wide />
             <Field label="Mask" value={row.has_mask ? "yes" : "no"} />
           </dl>
@@ -166,7 +234,7 @@ function TrackDetails({ rows }: { rows: TrackFrameRow[] }) {
 
 function VisualEventDetails({ rows }: { rows: VisualEventFrameRow[] }) {
   if (rows.length === 0) {
-    return <p className="empty-detail">No visual events at this frame.</p>;
+    return <p className="empty-detail">No events at this frame.</p>;
   }
   return (
     <div className="detail-list">

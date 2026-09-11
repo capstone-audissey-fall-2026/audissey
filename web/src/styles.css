@@ -261,6 +261,15 @@ button.download-link {
   color: #15120b;
 }
 
+.toggle.danger {
+  border-color: #823539;
+  color: #ffb7b7;
+}
+
+.toggle.danger:hover:not(:disabled) {
+  background: #2d1719;
+}
+
 .video-frame,
 .empty-video {
   background: #050609;
@@ -355,7 +364,7 @@ button.download-link {
 .inspector-tabs {
   display: grid;
   gap: 4px;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-top: 12px;
 }
 
@@ -385,6 +394,37 @@ button.download-link {
 .detail-list {
   display: grid;
   gap: 10px;
+}
+
+.keyframe-list {
+  display: grid;
+  gap: 10px;
+}
+
+.keyframe-card {
+  background: #101114;
+  border: 1px solid #303642;
+  border-radius: 5px;
+  display: grid;
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.keyframe-card img {
+  aspect-ratio: 16 / 9;
+  background: #050609;
+  border-radius: 4px;
+  display: block;
+  object-fit: cover;
+  width: 100%;
+}
+
+.keyframe-meta {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
 }
 
 .detail-card {

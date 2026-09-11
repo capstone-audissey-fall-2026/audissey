@@ -76,9 +76,15 @@ export interface InitialScene {
   initial_scene_id: string;
   start_frame_index: number;
   end_frame_index: number;
-  keyframes: unknown[];
+  keyframes: Keyframe[];
   initial_analysis?: unknown | null;
   scene_tracks: SceneTrack[];
+}
+
+export interface Keyframe {
+  keyframe_id: string;
+  frame_index: number;
+  image_path: string;
 }
 
 export interface SceneTrack {

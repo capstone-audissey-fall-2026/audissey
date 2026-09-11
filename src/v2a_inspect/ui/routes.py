@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -63,6 +64,22 @@ def create_router(store: VideoAssetStore) -> APIRouter:
     async def get_asset_summary() -> dict[str, object]:
         snapshot = await store.snapshot()
         return _summary_payload(snapshot)
+
+    @router.post("/api/asset/clean")
+    async def clean_asset() -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        cleaned = (
+            None
+            if snapshot.asset is None
+            else await asyncio.to_thread(_delete_asset_work_dir, snapshot.asset)
+        )
+        await store.clear()
+        return {
+            "status": "cleaned",
+            "deleted": None if cleaned is None else str(cleaned),
+        }
 
     @router.get("/api/video")
     async def get_video() -> FileResponse:
@@ -172,6 +189,20 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         return Response(
             render_tracking_overlay(snapshot.asset, frame),
             media_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/api/keyframes/{keyframe_id}")
+    async def get_keyframe(keyframe_id: str) -> FileResponse:
+        snapshot = await store.snapshot()
+        if snapshot.asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        path = _keyframe_response_path(snapshot.asset, keyframe_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="No keyframe image available")
+        return FileResponse(
+            path,
+            media_type="image/jpeg",
             headers={"Cache-Control": "no-store"},
         )
 
@@ -411,6 +442,42 @@ def _audio_file_response(path: Path, missing_detail: str) -> FileResponse:
         media_type="audio/wav",
         headers={"Accept-Ranges": "bytes"},
     )
+
+
+def _keyframe_response_path(asset: VideoAsset, keyframe_id: str) -> Path | None:
+    for scene in asset.initial_scenes:
+        for keyframe in scene.keyframes:
+            if str(keyframe.keyframe_id) != keyframe_id:
+                continue
+            try:
+                path = keyframe.image_path.resolve(strict=True)
+                root = asset.source_path.resolve(strict=True).parent
+            except OSError:
+                return None
+            if path.suffix.lower() not in {".jpg", ".jpeg"}:
+                return None
+            if not path.is_file() or not path.is_relative_to(root):
+                return None
+            return path
+    return None
+
+
+def _delete_asset_work_dir(asset: VideoAsset) -> Path | None:
+    root = _asset_work_root(asset)
+    if root is None or not root.exists():
+        return None
+    shutil.rmtree(root)
+    return root
+
+
+def _asset_work_root(asset: VideoAsset) -> Path | None:
+    root = asset.source_path.parent
+    if root.name == "uploads":
+        root = root.parent
+    root = root.resolve()
+    if root.name != "v2a-inspect-ui":
+        return None
+    return root
 
 
 def _full_snapshot_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:

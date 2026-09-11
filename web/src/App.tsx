@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   fetchAssetSummary,
+  cleanAsset,
   importAsset,
   resetSoundTimeline,
   startRun,
@@ -73,6 +74,17 @@ export default function App() {
     }
   }
 
+  async function handleClean() {
+    setSubmitError(null);
+    try {
+      await cleanAsset();
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   async function handleGenerateAudio(event: FormEvent<HTMLFormElement>, draftAsset: VideoAsset | null) {
     event.preventDefault();
     setSubmitError(null);
@@ -91,6 +103,7 @@ export default function App() {
       submitError={submitError}
       onSubmit={handleSubmit}
       onImport={handleImport}
+      onClean={handleClean}
       onResetSoundTimeline={handleResetSoundTimeline}
       onGenerateAudio={handleGenerateAudio}
     />

@@ -87,6 +87,15 @@ class VideoAssetStore:
             self._error = error
             self._bump_locked()
 
+    async def clear(self, *, stage: str = "cleaned") -> None:
+        async with self._condition:
+            self._asset = None
+            self._status = "idle"
+            self._current_stage = stage
+            self._error = None
+            self._asset_version += 1
+            self._bump_locked()
+
     async def touch(self, *, stage: str | None = None) -> None:
         async with self._condition:
             self._current_stage = stage or self._current_stage
