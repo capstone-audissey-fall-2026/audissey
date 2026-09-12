@@ -777,7 +777,7 @@ button.download-link {
 
 .bar-editable {
   cursor: grab;
-  padding: 0 24px 0 14px;
+  padding: 0 72px 0 14px;
   touch-action: none;
   user-select: none;
 }
@@ -852,13 +852,18 @@ button.download-link {
 .event-audio-actions {
   display: grid;
   gap: 0.5rem;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
 
 .event-audio-actions .secondary {
   background: #242832;
   border: 1px solid #3a4050;
   color: #d8dde6;
+}
+
+.event-audio-actions .danger {
+  border-color: #6f3737;
+  color: #ffc9c9;
 }
 
 .event-dialog-backdrop {

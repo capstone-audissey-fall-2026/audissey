@@ -23,6 +23,13 @@ interface VideoEditorProps {
   onClean: () => Promise<void> | void;
   onResetSoundTimeline: () => void;
   onGenerateAudio?: (event: FormEvent<HTMLFormElement>, draftAsset: VideoAsset | null) => Promise<void> | void;
+  onDeleteEventAudio?: (soundEventId: string) => Promise<void> | void;
+  onRegenerateEventAudio?: (
+    soundEventId: string,
+    description: string,
+    spokenText: string | null,
+    serverUrl: string | null,
+  ) => Promise<void> | void;
 }
 
 export default function VideoEditor({
@@ -33,6 +40,8 @@ export default function VideoEditor({
   onClean,
   onResetSoundTimeline,
   onGenerateAudio,
+  onDeleteEventAudio,
+  onRegenerateEventAudio,
 }: VideoEditorProps) {
   const [frame, setFrame] = useState(0);
   const [showTrackingOverlay, setShowTrackingOverlay] = useState(false);
@@ -48,6 +57,7 @@ export default function VideoEditor({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const audioPreviewMutedRestoreRef = useRef<boolean | null>(null);
+  const audioCacheRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const animationRef = useRef<number | null>(null);
   const trackWindowRequestRef = useRef<string | null>(null);
   const video = state.video;
@@ -68,11 +78,8 @@ export default function VideoEditor({
     [baseAsset, hasTimelineEdits, state.audio_tracks],
   );
   const audioEventArtifacts = useMemo<AudioEventArtifact[]>(
-    () =>
-      hasTimelineEdits
-        ? []
-        : (baseAsset?.sound_event_audio_artifacts ?? state.audio_events ?? []),
-    [baseAsset, hasTimelineEdits, state.audio_events],
+    () => baseAsset?.sound_event_audio_artifacts ?? state.audio_events ?? [],
+    [baseAsset, state.audio_events],
   );
   const counts = useMemo(() => {
     const scenes = countRows(timelineRows, "scene");
@@ -128,8 +135,22 @@ export default function VideoEditor({
   useEffect(() => {
     return () => {
       stopPreviewAudio(true);
+      for (const audio of audioCacheRef.current.values()) {
+        audio.pause();
+      }
+      audioCacheRef.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    for (const audio of audioCacheRef.current.values()) {
+      audio.pause();
+    }
+    audioCacheRef.current.clear();
+    for (const artifact of audioEventArtifacts) {
+      preloadAudio(eventAudioUrl(artifact.sound_event_id));
+    }
+  }, [audioEventArtifacts, state.asset_version]);
 
   useEffect(() => {
     if (frame !== selectedFrame) {
@@ -214,6 +235,25 @@ export default function VideoEditor({
     audioPreviewMutedRestoreRef.current = null;
   }
 
+  function eventAudioUrl(soundEventId: string): string {
+    return `/api/audio/events/${soundEventId}?asset_version=${state.asset_version}`;
+  }
+
+  function trackAudioUrl(soundTrackId: string): string {
+    return `/api/audio/tracks/${soundTrackId}?asset_version=${state.asset_version}`;
+  }
+
+  function preloadAudio(url: string): HTMLAudioElement {
+    let audio = audioCacheRef.current.get(url);
+    if (!audio) {
+      audio = new Audio(url);
+      audio.preload = "auto";
+      audioCacheRef.current.set(url, audio);
+      audio.load();
+    }
+    return audio;
+  }
+
   function playSyncedAudio(url: string, audioStartTime: number, videoStartFrame: number) {
     const videoElement = videoRef.current;
     stopPreviewAudio(true);
@@ -222,8 +262,13 @@ export default function VideoEditor({
     const videoStartTime = nextFrame / fps;
     setFrame(nextFrame);
 
-    const audio = new Audio(url);
-    audio.currentTime = Math.max(0, audioStartTime);
+    const audio = preloadAudio(url);
+    audio.pause();
+    try {
+      audio.currentTime = Math.max(0, audioStartTime);
+    } catch {
+      audio.load();
+    }
     audioPreviewRef.current = audio;
 
     if (videoElement) {
@@ -261,19 +306,59 @@ export default function VideoEditor({
   }
 
   function playTrackAudio(soundTrackId: string, startFrame: number) {
-    playSyncedAudio(
-      `/api/audio/tracks/${soundTrackId}?asset_version=${state.asset_version}`,
-      startFrame / fps,
-      startFrame,
-    );
+    playSyncedAudio(trackAudioUrl(soundTrackId), startFrame / fps, startFrame);
   }
 
   function playEventAudio(soundEventId: string, startFrame: number) {
-    playSyncedAudio(
-      `/api/audio/events/${soundEventId}?asset_version=${state.asset_version}`,
-      0,
-      startFrame,
-    );
+    playSyncedAudio(eventAudioUrl(soundEventId), 0, startFrame);
+  }
+
+  async function deleteSoundEventAudio(soundEventId: string) {
+    if (!onDeleteEventAudio || state.status === "running") {
+      return;
+    }
+    if (!window.confirm("Delete generated audio for this event?")) {
+      return;
+    }
+    stopPreviewAudio(false);
+    try {
+      await onDeleteEventAudio(soundEventId);
+    } catch {
+      return;
+    }
+    setHasTimelineEdits(false);
+    setEditingEventId((current) => (current === soundEventId ? null : current));
+    setExportStatus("Queued event audio delete.");
+  }
+
+  async function regenerateSoundEventAudio(
+    form: HTMLFormElement,
+    soundEventId: string,
+    isSpeech: boolean,
+  ) {
+    if (!onRegenerateEventAudio || state.status === "running") {
+      return;
+    }
+    const fd = new FormData(form);
+    const description = String(fd.get("description") || "").trim();
+    const spokenText = isSpeech ? String(fd.get("spoken_text") || "").trim() : null;
+    const serverUrl = String(fd.get("server_url") || "").trim() || null;
+    if (!description || (isSpeech && !spokenText)) {
+      return;
+    }
+    try {
+      await onRegenerateEventAudio(
+        soundEventId,
+        description,
+        spokenText || null,
+        serverUrl,
+      );
+    } catch {
+      return;
+    }
+    submitEditSoundEventDetails(soundEventId, description, spokenText);
+    setHasTimelineEdits(false);
+    setExportStatus("Queued event audio regeneration.");
   }
 
   function togglePlayback() {
@@ -328,14 +413,15 @@ export default function VideoEditor({
   }
 
   function createSoundTrack(input: CreateSoundTrackInput) {
+    const trackType =
+      input.generationModel === "tts" ? "speech" : input.trackType;
     const track: SoundTrack = {
       sound_track_id: makeId(),
-      track_type: input.trackType,
+      track_type: trackType,
       label: input.label,
       canonical_key: input.canonicalKey ?? normalizeCanonicalKey(input.label),
       sound_source_id: null,
-      generation_model:
-        input.trackType === "speech" ? "tts" : input.generationModel,
+      generation_model: trackType === "speech" ? "tts" : input.generationModel,
       notes: null,
     };
     setDraftAsset((currentAsset) => {
@@ -355,31 +441,65 @@ export default function VideoEditor({
     generationModel: GenerationModel,
   ) {
     const track = soundTracks.find((item) => item.sound_track_id === soundTrackId);
-    if (!track || track.track_type === "speech") {
+    if (!track) {
       return;
     }
+    const nextTrackType =
+      generationModel === "tts" ? "speech" : track.track_type;
+    const nextGenerationModel =
+      nextTrackType === "speech" ? "tts" : generationModel;
+    const nextTrack = {
+      ...track,
+      track_type: nextTrackType,
+      generation_model: nextGenerationModel,
+    };
     setDraftAsset((currentAsset) => {
       if (!currentAsset?.sound_timeline) {
         return currentAsset;
       }
       const nextAsset = cloneAsset(currentAsset);
-      const nextTrack = nextAsset.sound_timeline?.sound_tracks.find(
+      const timeline = nextAsset.sound_timeline;
+      if (!timeline) {
+        return nextAsset;
+      }
+      const draftTrack = timeline.sound_tracks.find(
         (item) => item.sound_track_id === soundTrackId,
       );
-      if (nextTrack) {
-        nextTrack.generation_model = generationModel;
+      if (draftTrack) {
+        draftTrack.track_type = nextTrackType;
+        draftTrack.generation_model = nextGenerationModel;
+      }
+      if (nextTrackType === "speech") {
+        timeline.sound_events = timeline.sound_events.map((event) =>
+          event.sound_track_id === soundTrackId
+            ? {
+                ...event,
+                spoken_text:
+                  event.spoken_text?.trim() || event.description.trim() || "speech",
+              }
+            : event,
+        );
       }
       return nextAsset;
     });
     setTimelineRows((currentRows) =>
       currentRows.map((row) =>
         row.sound_track_id === soundTrackId
-          ? { ...row, generation_model: generationModel }
+          ? {
+              ...row,
+              kind: nextTrackType,
+              lane: soundLane(nextTrack),
+              generation_model: nextGenerationModel,
+              spoken_text:
+                nextTrackType === "speech"
+                  ? row.spoken_text?.trim() || row.label.trim() || "speech"
+                  : null,
+            }
           : row,
       ),
     );
     setHasTimelineEdits(true);
-    setExportStatus(`Changed "${track.label}" to ${generationModel.toUpperCase()}.`);
+    setExportStatus(`Changed "${track.label}" to ${nextGenerationModel.toUpperCase()}.`);
   }
 
   function deleteSoundTrack(soundTrackId: string) {
@@ -523,7 +643,7 @@ export default function VideoEditor({
     soundEventId: string,
     description: string,
     spokenText: string | null,
-  ) {
+  ): boolean {
     const row = timelineRows.find((item) => item.sound_event_id === soundEventId);
     const track = soundTracks.find(
       (item) => item.sound_track_id === row?.sound_track_id,
@@ -536,7 +656,7 @@ export default function VideoEditor({
       !nextDescription ||
       (track?.track_type === "speech" && !nextSpokenText)
     ) {
-      return;
+      return false;
     }
 
     setDraftAsset((currentAsset) =>
@@ -562,6 +682,7 @@ export default function VideoEditor({
     setHasTimelineEdits(true);
     setExportStatus("Updated sound event details.");
     setEditingEventId(null);
+    return true;
   }
 
   async function submitGenerateAudio(event: FormEvent<HTMLFormElement>) {
@@ -918,6 +1039,7 @@ export default function VideoEditor({
             onEditSoundEventDetails={startEditingSoundEventDetails}
             onPlayTrackAudio={playTrackAudio}
             onPlayEventAudio={playEventAudio}
+            onDeleteEventAudio={deleteSoundEventAudio}
             onSelectFrame={selectFrame}
           />
           </section>
@@ -978,15 +1100,40 @@ export default function VideoEditor({
                     </button>
                     <a
                       className="download-link"
-                      href={`/api/audio/events/${editingEventId}?asset_version=${state.asset_version}`}
+                      href={eventAudioUrl(editingEventId)}
                       download
                     >
                       Download event WAV
                     </a>
+                    <button
+                      type="button"
+                      className="secondary danger"
+                      disabled={state.status === "running"}
+                      onClick={() => void deleteSoundEventAudio(editingEventId)}
+                    >
+                      Delete event WAV
+                    </button>
                   </div>
                 ) : null}
+                <label>
+                  <span>Inference server URL</span>
+                  <input name="server_url" type="url" placeholder="http://..." />
+                </label>
                 <div className="event-dialog-actions">
                   <button type="button" className="secondary" onClick={() => setEditingEventId(null)}>Cancel</button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={state.status === "running"}
+                    onClick={(event) => {
+                      const form = event.currentTarget.form;
+                      if (form) {
+                        void regenerateSoundEventAudio(form, editingEventId, isSpeech);
+                      }
+                    }}
+                  >
+                    Regenerate Audio
+                  </button>
                   <button type="submit">Save Changes</button>
                 </div>
               </form>

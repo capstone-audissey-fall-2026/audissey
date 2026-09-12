@@ -23,6 +23,8 @@ from .pipeline import (
     run_sound_timeline_pipeline,
     run_uploaded_video_pipeline,
     run_audio_generation_pipeline,
+    run_event_audio_delete_pipeline,
+    run_event_audio_regeneration_pipeline,
 )
 from .rows import current_frame_rows, timeline_rows, tracking_window_rows
 from .store import VideoAssetSnapshot, VideoAssetStore
@@ -138,6 +140,51 @@ def create_router(store: VideoAssetStore) -> APIRouter:
         if artifact is None:
             raise HTTPException(status_code=404, detail="No event audio available")
         return _audio_file_response(artifact.path, "No event audio file available")
+
+    @router.delete("/api/audio/events/{sound_event_id}")
+    async def delete_audio_event(
+        sound_event_id: str,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        if snapshot.asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        background_tasks.add_task(
+            run_event_audio_delete_pipeline, snapshot.asset, store, sound_event_id
+        )
+        await store.publish_asset_mutation(
+            snapshot.asset, stage="queued event audio delete"
+        )
+        return {"status": "queued"}
+
+    @router.post("/api/audio/events/{sound_event_id}/regenerate")
+    async def regenerate_audio_event(
+        sound_event_id: str,
+        background_tasks: BackgroundTasks,
+        description: Annotated[str, Form()],
+        spoken_text: Annotated[str | None, Form()] = None,
+        server_url: Annotated[str | None, Form()] = None,
+    ) -> dict[str, object]:
+        snapshot = await store.snapshot()
+        if snapshot.status == "running":
+            raise HTTPException(status_code=409, detail="Pipeline is running")
+        if snapshot.asset is None:
+            raise HTTPException(status_code=404, detail="No video asset loaded")
+        background_tasks.add_task(
+            run_event_audio_regeneration_pipeline,
+            snapshot.asset,
+            store,
+            sound_event_id,
+            description,
+            spoken_text,
+            server_url or DEFAULT_SERVER_URL or None,
+        )
+        await store.publish_asset_mutation(
+            snapshot.asset, stage="queued event audio regeneration"
+        )
+        return {"status": "queued"}
 
     @router.get("/api/rows/timeline")
     async def get_timeline_rows() -> dict[str, object]:

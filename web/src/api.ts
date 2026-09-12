@@ -110,3 +110,37 @@ export async function generateAudio(form: HTMLFormElement, asset: VideoAsset | n
   }
 }
 
+export async function deleteEventAudio(soundEventId: string): Promise<void> {
+  const response = await fetch(`/api/audio/events/${soundEventId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to delete event audio: ${response.status}`);
+  }
+}
+
+export async function regenerateEventAudio(
+  soundEventId: string,
+  description: string,
+  spokenText: string | null,
+  serverUrl: string | null,
+): Promise<void> {
+  const formData = new FormData();
+  formData.append("description", description);
+  if (spokenText) {
+    formData.append("spoken_text", spokenText);
+  }
+  if (serverUrl) {
+    formData.append("server_url", serverUrl);
+  }
+  const response = await fetch(`/api/audio/events/${soundEventId}/regenerate`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Failed to regenerate event audio: ${response.status}`);
+  }
+}
+

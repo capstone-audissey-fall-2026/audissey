@@ -27,6 +27,7 @@ interface TimelineProps {
   onSelectFrame: (frame: number) => void;
   onPlayTrackAudio?: (soundTrackId: string, startFrame: number) => void;
   onPlayEventAudio?: (soundEventId: string, startFrame: number) => void;
+  onDeleteEventAudio?: (soundEventId: string) => void;
   onEditSoundEvent?: (
     soundEventId: string,
     startFrame: number,
@@ -92,6 +93,9 @@ const laneToggles: { kind: LaneKind; label: string }[] = [
   { kind: "audio", label: "Audio" },
 ];
 
+const generationModelOptions = (trackType: SoundTrackType): GenerationModel[] =>
+  trackType === "speech" ? ["tts"] : ["t2a", "v2a", "tts"];
+
 export default function Timeline({
   rows,
   soundTracks,
@@ -103,6 +107,7 @@ export default function Timeline({
   onSelectFrame,
   onPlayTrackAudio,
   onPlayEventAudio,
+  onDeleteEventAudio,
   onEditSoundEvent,
   onCreateSoundTrack,
   onDeleteSoundTrack,
@@ -244,10 +249,11 @@ export default function Timeline({
     if (!label || !onCreateSoundTrack) {
       return;
     }
+    const nextTrackType = generationModel === "tts" ? "speech" : trackType;
     onCreateSoundTrack({
-      trackType,
+      trackType: nextTrackType,
       label,
-      generationModel: trackType === "speech" ? "tts" : generationModel,
+      generationModel: nextTrackType === "speech" ? "tts" : generationModel,
       canonicalKey: canonicalKey.trim() || null,
     });
     setTrackLabel("");
@@ -339,20 +345,20 @@ export default function Timeline({
           />
           <select
             aria-label="Generation model"
-            disabled={trackType === "speech"}
             value={trackType === "speech" ? "tts" : generationModel}
-            onChange={(event) =>
-              setGenerationModel(event.target.value as GenerationModel)
-            }
+            onChange={(event) => {
+              const nextModel = event.target.value as GenerationModel;
+              setGenerationModel(nextModel);
+              if (nextModel === "tts") {
+                setTrackType("speech");
+              }
+            }}
           >
-            {trackType === "speech" ? (
-              <option value="tts">TTS</option>
-            ) : (
-              <>
-                <option value="t2a">T2A</option>
-                <option value="v2a">V2A</option>
-              </>
-            )}
+            {generationModelOptions(trackType).map((model) => (
+              <option key={model} value={model}>
+                {model.toUpperCase()}
+              </option>
+            ))}
           </select>
           <input
             value={canonicalKey}
@@ -415,28 +421,20 @@ export default function Timeline({
                         <select
                           aria-label={`Generation model for ${soundTrack.label}`}
                           className="lane-model-select"
-                          disabled={soundTrack.track_type === "speech"}
                           onChange={(event) =>
                             onEditSoundTrackGenerationModel?.(
                               soundTrack.sound_track_id,
                               event.target.value as GenerationModel,
                             )
                           }
-                          title={
-                            soundTrack.track_type === "speech"
-                              ? "Speech tracks always use TTS"
-                              : "Track generation model"
-                          }
+                          title="Track generation model"
                           value={soundTrack.generation_model}
                         >
-                          {soundTrack.track_type === "speech" ? (
-                            <option value="tts">TTS</option>
-                          ) : (
-                            <>
-                              <option value="t2a">T2A</option>
-                              <option value="v2a">V2A</option>
-                            </>
-                          )}
+                          {generationModelOptions(soundTrack.track_type).map((model) => (
+                            <option key={model} value={model}>
+                              {model.toUpperCase()}
+                            </option>
+                          ))}
                         </select>
                       ) : null}
                       {audioTrack ? (
@@ -577,6 +575,20 @@ export default function Timeline({
                                 type="button"
                               >
                                 p
+                              </button>
+                            ) : null}
+                            {hasEventAudio && onDeleteEventAudio ? (
+                              <button
+                                className="bar-action-button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onDeleteEventAudio(row.sound_event_id ?? "");
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                title="Delete generated audio"
+                                type="button"
+                              >
+                                -
                               </button>
                             ) : null}
                             {onEditSoundEventDescription ? (

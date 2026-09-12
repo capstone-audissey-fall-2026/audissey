@@ -6,6 +6,8 @@ import {
   resetSoundTimeline,
   startRun,
   generateAudio,
+  deleteEventAudio,
+  regenerateEventAudio,
 } from "./api";
 import type { VideoAsset } from "./types";
 import VideoEditor from "./components/VideoEditor";
@@ -97,6 +99,33 @@ export default function App() {
     }
   }
 
+  async function handleDeleteEventAudio(soundEventId: string) {
+    setSubmitError(null);
+    try {
+      await deleteEventAudio(soundEventId);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  async function handleRegenerateEventAudio(
+    soundEventId: string,
+    description: string,
+    spokenText: string | null,
+    serverUrl: string | null,
+  ) {
+    setSubmitError(null);
+    try {
+      await regenerateEventAudio(soundEventId, description, spokenText, serverUrl);
+      await refreshAssetSummary();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   return (
     <VideoEditor
       state={state}
@@ -106,6 +135,8 @@ export default function App() {
       onClean={handleClean}
       onResetSoundTimeline={handleResetSoundTimeline}
       onGenerateAudio={handleGenerateAudio}
+      onDeleteEventAudio={handleDeleteEventAudio}
+      onRegenerateEventAudio={handleRegenerateEventAudio}
     />
   );
 }

@@ -23,6 +23,23 @@ class AudioRoutingTest(unittest.TestCase):
         self.assertEqual(result, "speech.wav")
         generate_speech.assert_called_once_with("Hello there", "speech.wav", 1.0, None)
 
+    @patch("v2a_inspect.audio_generation.client.generate_speech_kokoro")
+    def test_speech_falls_back_to_description(self, generate_speech) -> None:
+        generate_speech.return_value = "speech.wav"
+
+        result = generate_audio_for_item(
+            kind="speech",
+            description="A calm close-mic voice",
+            out_path="speech.wav",
+            duration=1.0,
+            generation_model="t2a",
+        )
+
+        self.assertEqual(result, "speech.wav")
+        generate_speech.assert_called_once_with(
+            "A calm close-mic voice", "speech.wav", 1.0, None
+        )
+
     @patch("v2a_inspect.audio_generation.client.generate_sfx_elevenlabs")
     def test_non_synced_sfx_uses_t2a(self, generate_sfx) -> None:
         generate_sfx.return_value = "sfx.wav"
@@ -50,6 +67,19 @@ class AudioRoutingTest(unittest.TestCase):
 
         self.assertIsNone(result)
         generate_sfx.assert_not_called()
+
+    @patch("v2a_inspect.audio_generation.client.generate_speech_kokoro")
+    def test_tts_rejects_non_speech(self, generate_speech) -> None:
+        result = generate_audio_for_item(
+            kind="sfx",
+            description="A visible impact",
+            out_path="impact.wav",
+            duration=0.2,
+            generation_model="tts",
+        )
+
+        self.assertIsNone(result)
+        generate_speech.assert_not_called()
 
 
 if __name__ == "__main__":

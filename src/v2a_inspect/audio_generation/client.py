@@ -168,9 +168,12 @@ def generate_audio_for_item(
             generation_model = "tts"
 
         if generation_model == "tts":
-            if not spoken_text:
+            if kind not in ("dialogue", "speech"):
+                raise ValueError("TTS generation requires speech kind")
+            text = (spoken_text or description).strip()
+            if not text:
                 raise ValueError("TTS generation requires spoken_text")
-            return generate_speech_kokoro(spoken_text, out_path, duration, server_url)
+            return generate_speech_kokoro(text, out_path, duration, server_url)
 
         if generation_model == "v2a":
             if not video_id or not time:
