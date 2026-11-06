@@ -307,6 +307,7 @@ cython_debug/
 !web/package.json
 !web/package-lock.json
 !web/tsconfig.json
+!samples/*.json
 
 # Local benchmark media and outputs
 data/
@@ -315,6 +316,7 @@ data/
 *.mp4
 *.webm
 *.mkv
+!samples/*.mp4
 
 # Downloaded model assets and local input archives
 *.pth
