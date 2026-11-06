@@ -19,7 +19,11 @@ uses LangGraph internally; it is not an interactive CLI loop.
 cp .env.example .env
 uv sync --extra ui
 uv sync --project server
+(cd web && npm ci && npm run build)
 ```
+
+The UI serves the built frontend from `web/dist`, so the build step is required
+before `v2a ui` shows anything. Use Node 20.19+ or 22.12+ (Vite 7).
 
 Add a Gemini API key to `.env`, then start the inference server and UI in
 the repository-owned virtual environments with one command:
@@ -42,6 +46,41 @@ Open `http://127.0.0.1:8501`. The UI flow is:
 Speech tracks use Kokoro TTS and require `spoken_text`. SFX and ambience default
 to text-to-audio; use V2A only for sounds that require precise synchronization
 with visible motion. Kokoro downloads its model on the first speech request.
+
+## Sample data
+
+`samples/` holds a 7-second clip and its analyzed `VideoAsset` (scenes, object
+tracks, and an agent-generated sound timeline). To edit without running the
+analysis, open the UI and use **Import asset** with `samples/sample.mp4` and
+`samples/sample.video-asset.json`. Then edit the timeline and run
+`Generate Audio` (needs the inference server and a GPU). Keyframe images and the
+SAM3 overlay are not included, so those previews stay empty until you run the
+analysis yourself.
+
+## Frontend development
+
+Run the UI backend and the Vite dev server separately:
+
+```bash
+uv run v2a ui                  # terminal 1, port 8501
+cd web && npm ci && npm run dev   # terminal 2, proxies /api and /events to 8501
+```
+
+## Tests
+
+```bash
+uv run python -m unittest discover tests
+uv run --project server python -m unittest discover server/tests
+(cd web && npm test)
+```
+
+## Prerequisites
+
+- Linux with an NVIDIA GPU for the inference server (SAM3, Hunyuan V2A).
+- A Gemini API key (`GEMINI_API_KEY`) for the analysis and timeline agent.
+- Hunyuan weights (about 8 GB) and Kokoro download automatically on first use.
+- SAM3 is installed from `facebookresearch/sam3`; its checkpoint may need a
+  Hugging Face account with access (set `HF_TOKEN` in `.env`).
 
 ## Docker Compose
 
