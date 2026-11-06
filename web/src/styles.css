@@ -188,6 +188,81 @@ button.download-link {
   color: #d8dde6;
 }
 
+.generated-audio-panel {
+  border-top: 1px solid #2a2d35;
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.generated-audio-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.generated-audio-header h2 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.generated-audio-header span {
+  color: #939cac;
+  font-size: 12px;
+}
+
+.generated-audio-list {
+  display: grid;
+  gap: 10px;
+  max-height: 38vh;
+  overflow: auto;
+}
+
+.generated-audio-item {
+  background: #101114;
+  border: 1px solid #303642;
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.generated-audio-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.generated-audio-meta strong {
+  color: #f4f6fa;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generated-audio-meta span {
+  color: #939cac;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.generated-audio-item audio {
+  height: 32px;
+  width: 100%;
+}
+
+.generated-audio-actions {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 1fr;
+}
+
+.generated-audio-actions .toggle {
+  width: 100%;
+}
+
 .asset-stats {
   display: grid;
   gap: 8px;

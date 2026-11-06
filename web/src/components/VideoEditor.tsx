@@ -81,6 +81,27 @@ export default function VideoEditor({
     () => baseAsset?.sound_event_audio_artifacts ?? state.audio_events ?? [],
     [baseAsset, state.audio_events],
   );
+  const generatedAudioItems = useMemo(() => {
+    const rowsByEvent = new Map<string, TimelineRow>();
+    for (const row of timelineRows) {
+      if (row.sound_event_id) {
+        rowsByEvent.set(row.sound_event_id, row);
+      }
+    }
+    const tracksById = new Map<string, SoundTrack>(
+      soundTracks.map((track) => [track.sound_track_id, track]),
+    );
+    return audioEventArtifacts
+      .map((artifact) => ({
+        artifact,
+        row: rowsByEvent.get(artifact.sound_event_id),
+        track: tracksById.get(artifact.sound_track_id),
+      }))
+      .sort(
+        (left, right) =>
+          (left.row?.start_frame ?? 0) - (right.row?.start_frame ?? 0),
+      );
+  }, [audioEventArtifacts, soundTracks, timelineRows]);
   const counts = useMemo(() => {
     const scenes = countRows(timelineRows, "scene");
     const tracks = countRows(timelineRows, "track");
@@ -906,6 +927,72 @@ export default function VideoEditor({
                 </div>
               ) : null}
             </form>
+            {generatedAudioItems.length > 0 && !hasTimelineEdits ? (
+              <section
+                className="generated-audio-panel"
+                aria-label="Generated event audio"
+              >
+                <div className="generated-audio-header">
+                  <h2>Generated Audio</h2>
+                  <span>{generatedAudioItems.length} events</span>
+                </div>
+                <div className="generated-audio-list">
+                  {generatedAudioItems.map(({ artifact, row, track }) => {
+                    const startFrame = row?.start_frame ?? 0;
+                    const endFrame = row?.end_frame ?? startFrame;
+                    const label = row?.label ?? artifact.description;
+                    return (
+                      <article
+                        className="generated-audio-item"
+                        key={artifact.sound_event_id}
+                      >
+                        <div className="generated-audio-meta">
+                          <strong title={label}>{label}</strong>
+                          <span>
+                            {track?.label ?? artifact.sound_track_id} | {artifact.generation_model.toUpperCase()} |{" "}
+                            {(startFrame / fps).toFixed(2)}-
+                            {(endFrame / fps).toFixed(2)}s
+                          </span>
+                        </div>
+                        <audio
+                          controls
+                          preload="auto"
+                          src={eventAudioUrl(artifact.sound_event_id)}
+                          aria-label={`Audio preview for ${label}`}
+                        />
+                        <div className="generated-audio-actions">
+                          <button
+                            className="toggle"
+                            onClick={() =>
+                              playEventAudio(artifact.sound_event_id, startFrame)
+                            }
+                            type="button"
+                          >
+                            Play with video
+                          </button>
+                          <button
+                            className="toggle"
+                            disabled={state.status === "running" || !row}
+                            onClick={() => setEditingEventId(artifact.sound_event_id)}
+                            type="button"
+                          >
+                            Edit / Regenerate
+                          </button>
+                          <button
+                            className="toggle danger"
+                            disabled={state.status === "running"}
+                            onClick={() => void deleteSoundEventAudio(artifact.sound_event_id)}
+                            type="button"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
 
           <dl className="asset-stats">
             <div>
