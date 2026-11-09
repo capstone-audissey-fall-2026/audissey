@@ -1,3 +1,4 @@
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,10 +45,10 @@ class ToolsTests(unittest.TestCase):
         from audyssey.settings import Settings
 
         tools = load_tools(Settings())
-        self.assertIs(tools.plan, planning.plan)
-        self.assertIs(tools.validate_plan, planning.validate_plan)
-        self.assertIs(tools.separate, separation.separate)
-        self.assertIs(tools.judge, filtering.judge)
+        self.assertIs(inspect.unwrap(tools.plan), planning.plan)
+        self.assertIs(inspect.unwrap(tools.validate_plan), planning.validate_plan)
+        self.assertIs(inspect.unwrap(tools.separate), separation.separate)
+        self.assertIs(inspect.unwrap(tools.judge), filtering.judge)
 
     def test_load_tools_real_raises_not_implemented(self):
         from audyssey.tools import load_tools

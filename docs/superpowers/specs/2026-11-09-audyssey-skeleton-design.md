@@ -48,7 +48,6 @@
 - 자연어 편집 입력. 단, 이후에 붙일 수 있게 명령 구조는 지금 만든다(§7.2).
 - 30초를 넘는 영상과 오디오 청크 처리
 - 사용자 인증, 다중 사용자, DB, 작업 큐
-- 도구를 별도 서버로 분리하는 원격 호출 구조
 - 최종 UI 디자인(§9)
 
 ### 실패로 간주할 것 (기술적으로 돌아가도)
@@ -189,7 +188,15 @@ Command      = Keep | Drop | SetGain | SetPitch | Reseparate | AddSource | Rende
 ## 7. 도구 인터페이스와 명령
 
 ### 7.1 도구 함수
-각 도구는 함수 하나다. `stub`과 `real` 구현은 같은 시그니처를 가진다.
+각 도구는 함수 하나다. `stub`, `real`, 분리·필터링의 `remote` 구현은 같은 시그니처를 가진다.
+
+**remote 모드**: `audyssey tool-server`가 분리·필터링 구현을 HTTP로 제공한다.
+- `GET /health`는 인증 없이 도구와 구현 이름을 반환한다.
+- 분리 서버의 `POST /separate`: multipart `mono`, `video`, `plan`(SourcePlan JSON), `attempt`; 응답은 WAV다.
+- 필터링 서버의 `POST /judge`: multipart `mono`, `track`, `plan`; 응답은 FilterResult JSON이다.
+- `AUDYSSEY_TOOL_TOKEN`이 있으면 `Authorization: Bearer <token>`을 요구하고, 틀리거나 빠지면 401이다. loopback 이외 주소에 바인딩하려면 토큰이 필수다.
+- 메인 서버에서 `AUDYSSEY_SEPARATOR=remote`, `AUDYSSEY_SEPARATOR_URL`, `AUDYSSEY_FILTER=remote`, `AUDYSSEY_FILTER_URL`, 같은 `AUDYSSEY_TOOL_TOKEN`을 설정한다. `AUDYSSEY_REMOTE_TIMEOUT_S` 기본값은 600초(양수)다. URL이 빠지면 서버 시작 시 실패한다.
+- 업로드 이름은 사용하지 않고 임시 폴더의 고정 이름으로 저장한다. 프로세스당 모델 호출은 잠금 하나로 직렬 실행한다. HTTP 오류와 타임아웃은 해당 소스만 실패시킨다.
 
 ```
 plan(video_path, audio_path, duration, feedback: list[PlanIssue]) -> list[SourcePlan]
@@ -249,16 +256,18 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - 트랙 목록(재생, keep/drop, 음량, 피치, 텍스트 수정 후 재분리, 소스 추가)
   - 합치기와 다운로드
 - 개발용 화면은 바뀌거나 버려질 수 있다. 바뀌지 않는 것은 API(§8)와 계약(§6)이다.
-- 개발용 화면은 `src/audyssey/devui/index.html` 한 장이며 vanilla JS를 사용한다. 빌드와 Node가 필요 없다. 기존 `web/`는 UI 담당이 최종 화면을 만들도록 그대로 둔다.
+- 개발용 화면은 `src/audyssey/devui/index.html` 한 장이며 vanilla JS를 사용한다. 빌드와 Node가 필요 없다. 기존 `web/`는 PR #5에서 삭제했다. UI 담당이 최종 화면을 새로 만든다.
 
 ## 10. 실행과 운영
 
 - **도구 선택**
-  - `AUDYSSEY_PLANNER`, `AUDYSSEY_SEPARATOR`, `AUDYSSEY_FILTER` 환경변수에 `stub` 또는 `real`을 넣는다. 기본값은 `stub`이다.
+  - `AUDYSSEY_PLANNER`에는 `stub` 또는 `real`, `AUDYSSEY_SEPARATOR`, `AUDYSSEY_FILTER`에는 `stub`, `real`, `remote`를 넣는다. 기본값은 `stub`이다.
   - `real`로 선택된 모델은 처음 쓰는 시점에 불러온다. 서버 시작 시 미리 불러오지 않는다.
-- **플래닝 real**: 기존 `model_manager` 방식을 쓴다. 설정으로 Gemini와 OpenAI 호환 주소(vLLM)를 고른다. 모델 선택은 도은 담당이다.
+- **도구 서버**: `AUDYSSEY_TOOL_TOKEN=... uv run audyssey tool-server --tool separation --impl real --host 0.0.0.0 --port 8700`. 필터링은 `--tool filtering --port 8701`로 별도 실행한다. 현재 real은 placeholder이므로 로컬 검증에는 `--impl stub`을 쓴다. 원격 연결은 TLS 프록시나 SSH 터널로 보호한다.
+- **플래닝 real**: `AUDYSSEY_PLANNER_BASE_URL`, `AUDYSSEY_PLANNER_MODEL`, `AUDYSSEY_PLANNER_API_KEY`로 Gemini/vLLM의 OpenAI 호환 API를 직접 부른다. `planning/llm.py`의 `chat_client(settings)`를 쓰고 호출 시 `settings.planner_model`을 전달한다. 주소는 필수, 로컬 서버의 키는 생략할 수 있다. real 본체와 모델 선택은 도은 담당이다.
+- **관측**: LangSmith의 `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`로 켠다. 기본은 꺼져 있다. LangGraph 그래프, 네 도구, 명령, LLM 사용량을 기록한다. 명령 입력은 job_id와 명령만 남기며 키·토큰과 오디오·영상 바이트는 기록하지 않는다. 파일 경로와 메타데이터만 남긴다.
 - **전처리**: 길이를 검사하고, ffmpeg로 48kHz 원본 채널 오디오와 모노 오디오를 추출하고, 파형 피크를 만든다.
-- **시스템 요구사항**: stub 모드에는 Python(uv), ffmpeg/ffprobe가 필요하다. 개발용 화면에는 Node가 필요 없다. 기존 `web/` 개발에만 Node 20.19+ 또는 22.12+가 필요하다.
+- **시스템 요구사항**: stub 모드에는 Python(uv), ffmpeg/ffprobe가 필요하다. 개발용 화면에는 Node가 필요 없다.
 - **저장 (제안)**: DB 없이 작업마다 폴더 하나(`work/jobs/<id>/`, `job.json` 포함)를 쓴다. 서버를 재시작해도 작업이 남는다.
 - **실패 처리 (제안)**
   - 도구 예외가 나면 그 소스만 `failed`가 되고, 나머지 소스는 계속 진행한다.
@@ -270,7 +279,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - keep, drop, gain, pitch는 언제든 받는다.
 - **의존성 (제안)**
   - 기본 설치에는 torch가 없다. 그래서 stub 모드는 노트북에서도 설치된다.
-  - real 도구용 의존성은 extras로 둔다: `[gpu]`(torch, sam-audio), `[llm]`(langchain-openai, langchain-google-genai).
+  - real 도구용 의존성은 extras로 둔다: `[gpu]`(torch, sam-audio), `[llm]`(openai); GPU extra는 real 구현 시 추가한다.
   - 기존 `server/`의 무거운 고정 의존성(flash-attn 휠 등)은 가져오지 않는다.
 - **Docker와 RunPod 가이드**: 뼈대 공유 직후 이어서 하는 작업이다.
 
@@ -283,21 +292,21 @@ src/audyssey/
   graph.py            # LangGraph 흐름, 검증 루프, 명령 처리
   store.py            # Job 상태 ↔ work/jobs/<id>/
   api.py              # §8 API + 개발용 화면 정적 제공
-  cli.py              # `audyssey serve`
+  cli.py              # `audyssey serve`, `audyssey tool-server`
+  toolserver.py       # 분리·필터링 HTTP 서버
   devui/index.html    # 빌드 없는 개발용 화면 (Node 불필요)
   tools/
     planning/   stub.py real.py     # 도은 (plan, validate_plan)
-    separation/ stub.py real.py     # SAM Audio
-    filtering/  stub.py real.py     # 윤석 (judge)
+    separation/ stub.py real.py remote.py     # SAM Audio
+    filtering/  stub.py real.py remote.py     # 윤석 (judge)
     editing/    render.py           # DSP
-web/                  # UI 담당이 최종 UI 개발 시 사용
 tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 ```
 
-- 같은 레포에 새 패키지로 만든다. 기존 `src/v2a_inspect`, `server/`, `demo/` 등은 **뼈대가 동작한 뒤 별도 PR로 삭제**한다. 삭제 후에도 git 기록과 `legacy` 원격에 남는다.
-- **CI**: 기존 CI가 `src/` 전체에 lint, type 검사, unittest를 돌리므로 새 패키지도 자동으로 포함된다. 기존 테스트는 삭제 PR 전까지 계속 통과해야 한다.
+- 같은 레포에 새 패키지로 만든다. 기존 `src/v2a_inspect`, `server/`, `demo/`, `web/` 등은 **PR #5에서 삭제**했다. 삭제 후에도 git 기록과 `legacy` 원격에 남는다.
+- **CI**: 기존 CI가 `src/` 전체에 lint, type 검사, unittest를 돌리므로 새 패키지도 자동으로 포함된다. stub E2E와 원격 도구 테스트를 계속 통과해야 한다.
 - **재사용**
-  - 그대로 쓰거나 일부 고쳐 쓴다: `llm/model_manager.py`, `observability/langfuse.py`(기본 URL 제거, 선택 기능), `preprocessing/video.py`(오디오 추출 추가), `audio_generation/mix.py`(render 참고), `ui/`의 SSE와 정적 제공 구조
+  - 그대로 쓰거나 일부 고쳐 쓴다: `preprocessing/video.py`(오디오 추출 추가), `audio_generation/mix.py`(render 참고), `ui/`의 SSE와 정적 제공 구조
   - 버린다: SAM3 추적 툴 레이어(시각 힌트 단계에서 다시 검토), Hunyuan, Kokoro, `visualization/`, `demo/`, `.streamlit/`, `CODEX_HANDOFF.md`, 서버 시작 시 모델을 모두 미리 불러오는 구조
 
 ## 12. 결정 기록
@@ -315,10 +324,16 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 10. 특정 서버에 의존하지 않는다. 팀원은 RunPod에서 재현한다.
 11. sv3-a100에서는 SAM Audio 가중치를 공용 캐시 미러로 읽어 쓴다.
 12. UI는 아직 정하지 않았다.
+13. 사용자 작업 상태 변경은 모두 `handle_command`의 명령으로 한다. 버튼·자연어 번역기·에이전트가 같은 명령을 쓰기 위한 필수 설계 원칙이다. 초기 분석 흐름은 기존 그래프가 담당한다.
+14. 도구 서버는 HTTP 창구가 없는 분리·필터링 모델에만 쓴다. 플래닝은 OpenAI 호환 주소·모델·키로 직접 부른다.
+15. 관측은 Langfuse 대신 LangSmith를 쓴다.
+16. 기존 `web/`는 PR #5에서 삭제했다. git 기록과 `legacy` 원격에 남아 있다.
 
 **Claude가 정한 것 (제안)**: 30초 상한, 루프 한도 2회, 형식 검사의 위치, 나머지 계산 규칙과 나머지의 keep/gain, stub의 루프 유발 동작, render 출력 규칙, 실패 처리, 동시성, 저장 방식, 의존성 분리, API 형식, 코드 구조, 기존 코드 삭제 시점.
 
 ## 13. 미결정 / 확인 필요
+
+**플래너 이식성 규칙**: 영상 파일을 API에 직접 넣지 않고 프레임 이미지로 전달한다. 오디오는 텍스트로 바꿔 전달한다. Gemini와 vLLM 양쪽에서 같은 OpenAI 호환 호출 코드가 동작하도록 유지한다.
 
 | 항목 | 누가, 언제 |
 |---|---|
