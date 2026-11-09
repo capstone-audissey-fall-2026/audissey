@@ -3,13 +3,14 @@ requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["v2a_inspect"]
+module-name = ["v2a_inspect", "audyssey"]
 module-root = "src"
 
 [tool.uv-build]
 include = [
     "src/v2a_inspect/prompts/files/**/*.txt",
     "src/v2a_inspect/ui/*.html",
+    "src/audyssey/devui/*.html",
 ]
 
 [project]
@@ -50,6 +51,7 @@ ui = [
 ]
 
 [project.scripts]
+audyssey = "audyssey.cli:main"
 v2a = "v2a_inspect.cli:main"
 
 [dependency-groups]
