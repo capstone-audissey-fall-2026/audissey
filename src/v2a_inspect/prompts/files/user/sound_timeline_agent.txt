@@ -1,7 +1,0 @@
-Objective:
-{objective}
-
-Execute by mutating current `VideoAsset.sound_timeline`.
-Use incremental 3-scene batches: batch reads, write batch events, verify local
-timeline window, then continue. Respect assigned scenes/frames as full scope
-for this run.
