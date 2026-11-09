@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     tool_token: str = Field(default="", repr=False)
     remote_timeout_s: float = Field(default=600, gt=0)
     planner_base_url: str = ""
+    planner_frames: int = Field(default=4, ge=1, le=16)
     planner_model: str = ""
     planner_api_key: str = Field(default="", repr=False)
     max_plan_rounds: int = Field(default=2, ge=1)

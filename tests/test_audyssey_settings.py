@@ -69,3 +69,11 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.judge_pass_threshold, 0.7)
         with self.assertRaises(ValidationError):
             Settings(sam_audio_reranking_candidates=0)
+
+    def test_planner_frames_bounds_and_env(self):
+        self.assertEqual(Settings().planner_frames, 4)
+        with patch.dict(os.environ, AUDYSSEY_PLANNER_FRAMES="8"):
+            self.assertEqual(Settings().planner_frames, 8)
+        for count in (0, 17):
+            with self.assertRaises(ValidationError):
+                Settings(planner_frames=count)
