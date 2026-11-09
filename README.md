@@ -69,9 +69,28 @@ docker compose up
 # http://localhost:8600 에서 samples/sample.mp4 업로드
 ```
 
-main, separation, judge 세 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
+main, separation, judge, vllm 네 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
 연결되며 GPU 도구 포트는 호스트에 공개하지 않습니다. 원격 서버 UI는 SSH 터널로
-연결합니다. 작업은 `jobs` 볼륨에 남습니다. 플래너는 기본 stub입니다.
+연결합니다. 작업은 `jobs` 볼륨에 남습니다. Compose 플래너는 기본 real이며 내부 `http://vllm:8000/v1`로
+연결합니다. Python 직접 실행의 기본값은 계속 stub입니다. vLLM은
+`Qwen/Qwen2.5-VL-3B-Instruct` 캐시를 미리 준비해야 하며 GPU 기본값은 0,
+메모리 사용 비율은 0.85입니다. 다른 GPU 도구와 함께 실행할 때는
+`AUDYSSEY_VLLM_GPU`와 메모리 여유를 조정합니다.
+
+vLLM 이미지는 [공식 v0.11.0 릴리스](https://github.com/vllm-project/vllm/releases/tag/v0.11.0)로
+고정했습니다. [해당 버전의 지원 모델](https://docs.vllm.ai/en/v0.11.0/models/supported_models.html)에
+Qwen2.5-VL-3B가 있습니다. 이미지 pull과 GPU 실행은 운영자 확인이 필요합니다.
+Gemini 키를 `.env`의 `GOOGLE_API_KEY`로 준비한 경우 다음 두 줄로 전환합니다.
+`AUDYSSEY_PLANNER_API_KEY`를 따로 설정하면 그 값이 우선합니다.
+
+```dotenv
+AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
+```
+
+Gemini에서는 `docker compose up main separation judge`로 vLLM 없이 실행할 수 있습니다.
+GPU 없이 Compose main만 실행하려면 `AUDYSSEY_PLANNER=stub`과 분리·필터링 stub
+또는 원격 도구 주소를 설정합니다.
 
 이미지는 `ghcr.io/capstone-audissey-fall-2026/audyssey-main:latest`와
 `ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest`입니다.

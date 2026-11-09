@@ -7,6 +7,10 @@ services:
     ports: ["127.0.0.1:8600:8600"]
     env_file: .env
     environment:
+      AUDYSSEY_PLANNER: ${AUDYSSEY_PLANNER:-real}
+      AUDYSSEY_PLANNER_BASE_URL: ${AUDYSSEY_PLANNER_BASE_URL:-http://vllm:8000/v1}
+      AUDYSSEY_PLANNER_MODEL: ${AUDYSSEY_PLANNER_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}
+      AUDYSSEY_PLANNER_API_KEY: ${AUDYSSEY_PLANNER_API_KEY:-${GOOGLE_API_KEY:-}}
       AUDYSSEY_SEPARATOR: ${AUDYSSEY_SEPARATOR:-remote}
       AUDYSSEY_SEPARATOR_URL: ${AUDYSSEY_SEPARATOR_URL:-http://separation:8700}
       AUDYSSEY_FILTER: ${AUDYSSEY_FILTER:-remote}
@@ -54,6 +58,26 @@ services:
           devices:
             - driver: nvidia
               device_ids: ["${AUDYSSEY_JUDGE_GPU:-0}"]
+              capabilities: [gpu]
+
+  vllm:
+    image: vllm/vllm-openai:v0.11.0
+    command:
+      - --model
+      - ${AUDYSSEY_VLLM_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}
+      - --gpu-memory-utilization
+      - ${AUDYSSEY_VLLM_GPU_UTIL:-0.85}
+      - --max-model-len
+      - "8192"
+    environment:
+      HF_HUB_OFFLINE: "1"
+    volumes: ["${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${AUDYSSEY_VLLM_GPU:-0}"]
               capabilities: [gpu]
 
 volumes:
