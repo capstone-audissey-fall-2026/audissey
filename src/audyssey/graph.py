@@ -1,9 +1,15 @@
+import json
 from dataclasses import dataclass
+from typing_extensions import TypedDict
+
+from langgraph.graph import END, START, StateGraph
 
 from audyssey.contracts import Job, PlanIssue, Source, SourcePlan, StepStatus
+from audyssey.media import compute_peaks, extract_audio, probe
 from audyssey.settings import Settings
 from audyssey.store import JobStore
 from audyssey.tools import Tools
+from audyssey.tools.editing.render import compute_residual
 
 
 @dataclass
@@ -135,3 +141,174 @@ def process_source(job: Job, source: Source, ctx: Context) -> None:
             ),
         )
     ctx.store.save(job)
+
+
+class AnalysisState(TypedDict):
+    job: Job
+    issues: list[PlanIssue]
+    round: int
+
+
+def refresh_residual(job: Job, ctx: Context) -> None:
+    directory = ctx.store.dir(job.id)
+    update_step(job, ctx, StepStatus(key="residual", status="running"))
+    compute_residual(
+        directory / job.audio_path,
+        [directory / s.track_path for s in job.sources if s.track_path],
+        directory / "residual.wav",
+    )
+    job.residual.path = "residual.wav"
+    update_step(job, ctx, StepStatus(key="residual", status="done"))
+
+
+def analyze(job: Job, ctx: Context) -> Job:
+    directory = ctx.store.dir(job.id)
+    active_key = "preprocess"
+
+    def preprocess(state: AnalysisState) -> dict:
+        update_step(job, ctx, StepStatus(key="preprocess", status="running"))
+        if not job.duration:
+            job.duration = probe(directory / job.video_path)[0]
+        extract_audio(directory / job.video_path, directory / "audio.wav", False)
+        extract_audio(directory / job.video_path, directory / "mono.wav", True)
+        job.audio_path, job.mono_path, job.peaks_path = (
+            "audio.wav",
+            "mono.wav",
+            "peaks.json",
+        )
+        (directory / job.peaks_path).write_text(
+            json.dumps(compute_peaks(directory / job.audio_path))
+        )
+        update_step(job, ctx, StepStatus(key="preprocess", status="done"))
+        return {}
+
+    def plan(state: AnalysisState) -> dict:
+        nonlocal active_key
+        active_key = "plan"
+        round_number = state["round"] + 1
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key="plan",
+                status="running",
+                round=round_number,
+                max_rounds=ctx.settings.max_plan_rounds,
+            ),
+        )
+        plans, issues = check_plans(
+            ctx.tools.plan(
+                directory / job.video_path,
+                directory / job.audio_path,
+                job.duration,
+                state["issues"],
+            ),
+            job.duration,
+        )
+        job.sources = [Source(id=f"s{i}", plan=p) for i, p in enumerate(plans, 1)]
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key="plan",
+                status="done",
+                round=round_number,
+                max_rounds=ctx.settings.max_plan_rounds,
+            ),
+        )
+        return {"issues": issues, "round": round_number}
+
+    def validate(state: AnalysisState) -> dict:
+        nonlocal active_key
+        active_key = "validate_plan"
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key=active_key,
+                status="running",
+                round=state["round"],
+                max_rounds=ctx.settings.max_plan_rounds,
+            ),
+        )
+        issues = state["issues"] or ctx.tools.validate_plan(
+            directory / job.video_path,
+            directory / job.audio_path,
+            [s.plan for s in job.sources],
+        )
+        job.plan_issues = issues
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key=active_key,
+                status="warning" if issues else "done",
+                round=state["round"],
+                max_rounds=ctx.settings.max_plan_rounds,
+                message="; ".join(i.message for i in issues),
+            ),
+        )
+        if issues and state["round"] >= ctx.settings.max_plan_rounds:
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key="plan",
+                    status="warning",
+                    round=state["round"],
+                    max_rounds=ctx.settings.max_plan_rounds,
+                    message="; ".join(i.message for i in issues),
+                ),
+            )
+        return {"issues": issues}
+
+    def separate(state: AnalysisState) -> dict:
+        nonlocal active_key
+        active_key = "separate"
+        # ponytail: sequential per-source loop, fan out with Send when real GPU tools need parallelism
+        for source in job.sources:
+            process_source(job, source, ctx)
+        return {}
+
+    def residual(state: AnalysisState) -> dict:
+        nonlocal active_key
+        active_key = "residual"
+        refresh_residual(job, ctx)
+        return {}
+
+    # ty cannot match LangGraph's TypedDictLike protocol to a concrete TypedDict.
+    builder = StateGraph(AnalysisState)  # ty: ignore[invalid-argument-type]
+    for name, node in [
+        ("preprocess", preprocess),
+        ("plan", plan),
+        ("validate", validate),
+        ("separate", separate),
+        ("residual", residual),
+    ]:
+        builder.add_node(name, node)
+    builder.add_edge(START, "preprocess")
+    builder.add_edge("preprocess", "plan")
+    builder.add_edge("plan", "validate")
+    builder.add_conditional_edges(
+        "validate",
+        lambda state: (
+            "plan"
+            if state["issues"] and state["round"] < ctx.settings.max_plan_rounds
+            else "separate"
+        ),
+        ["plan", "separate"],
+    )
+    builder.add_edge("separate", "residual")
+    builder.add_edge("residual", END)
+    try:
+        builder.compile().invoke(
+            {"job": job, "issues": [], "round": 0},
+            {"recursion_limit": 2 * ctx.settings.max_plan_rounds + 10},
+        )
+        job.state = "ready"
+    except Exception as exc:
+        job.state, job.error = "failed", str(exc)
+        update_step(
+            job, ctx, StepStatus(key=active_key, status="failed", message=str(exc))
+        )
+    return ctx.store.save(job)

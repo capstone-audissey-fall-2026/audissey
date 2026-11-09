@@ -70,3 +70,48 @@ class GraphTests(unittest.TestCase):
         graph.process_source(self.job, source, self.ctx)
         self.assertEqual(source.status, "failed")
         self.assertIsNone(source.track_path)
+
+    def test_analyze_runs_both_validation_loops(self):
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready")
+        self.assertEqual(len(job.sources), 3)
+        self.assertNotIn("ghost_sound", [s.plan.name for s in job.sources])
+        self.assertEqual(next(s for s in job.steps if s.key == "plan").round, 2)
+        a = job.sources[0]
+        self.assertEqual(a.attempts, 2)
+        self.assertTrue(a.filter.passed)
+        self.assertTrue(a.plan.description.endswith(" (refined)"))
+        self.assertEqual([s.attempts for s in job.sources[1:]], [1, 1])
+        self.assertTrue((self.directory / job.residual.path).is_file())
+
+    def test_plan_round_limit_warns(self):
+        self.ctx.settings.max_plan_rounds = 1
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(len(job.plan_issues), 1)
+        self.assertEqual(
+            next(s.status for s in job.steps if s.key == "plan"), "warning"
+        )
+        self.assertIn("ghost_sound", [s.plan.name for s in job.sources])
+
+    def test_tool_error_marks_only_that_source_failed(self):
+        original = self.ctx.tools.separate
+
+        def separate(mono, plan, video, out, attempt):
+            if plan.name == "sword_clash":
+                raise RuntimeError("separation failed")
+            return original(mono, plan, video, out, attempt)
+
+        self.ctx.tools = replace(self.ctx.tools, separate=separate)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready")
+        self.assertEqual([s.status for s in job.sources], ["done", "done", "failed"])
+
+    def test_plan_exception_marks_job_failed(self):
+        def fail(*args):
+            raise RuntimeError("planner unavailable")
+
+        self.ctx.tools = replace(self.ctx.tools, plan=fail)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "failed")
+        self.assertEqual(job.error, "planner unavailable")
+        self.assertEqual(self.ctx.store.load(job.id).state, "failed")
