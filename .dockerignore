@@ -5,3 +5,11 @@ __pycache__
 .env
 .env.secure
 secrets/
+web/node_modules
+web/dist
+.pytest_cache/
+.ruff_cache/
+*.tar
+*.tar.gz
+data/
+dist/

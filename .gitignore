@@ -260,6 +260,7 @@ celerybeat.pid
 
 # Environments
 .env
+!.env.example
 .env.secure
 credentials.yaml
 .venv
@@ -303,10 +304,25 @@ cython_debug/
 .omx/
 .agents/
 *.json
+!web/package.json
+!web/package-lock.json
+!web/tsconfig.json
+!samples/*.json
 
 # Local benchmark media and outputs
 data/
+.v2a_inspect/
 
 *.mp4
 *.webm
 *.mkv
+!samples/*.mp4
+
+# Downloaded model assets and local input archives
+*.pth
+/HunyuanVideo-Foley/
+/server/HunyuanVideo-Foley/
+/configs/hunyuanvideo-foley-*.yaml
+/server/configs/hunyuanvideo-foley-*.yaml
+/assets/*.zip
+/videos/*.zip

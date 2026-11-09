@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, computed_field
 
+from .audio_artifacts import SoundEventAudioArtifact, SoundTrackAudioArtifact
 from .base import SchemaModel
 from .initial_scene import InitialScene
 from .sound_timeline import SoundTimeline
@@ -29,6 +30,13 @@ class VideoAsset(SchemaModel):
     initial_scenes: list[InitialScene] = Field(default_factory=list)
     visual_identity_layer: VisualIdentityLayer | None = None
     sound_timeline: SoundTimeline | None = None
+    synthesized_video_path: Path | None = None
+    sound_event_audio_artifacts: list[SoundEventAudioArtifact] = Field(
+        default_factory=list
+    )
+    sound_track_audio_artifacts: list[SoundTrackAudioArtifact] = Field(
+        default_factory=list
+    )
 
     @computed_field
     @property

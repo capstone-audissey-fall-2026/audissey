@@ -1,11 +1,7 @@
 Objective:
 {objective}
 
-Execute by mutating the current VideoAsset.sound_timeline with tools.
-Use visual events and scene summaries before frame images.
-Create sources and events throughout the run.
-Do not build a full mental map first.
-Make incremental edits after each small scene batch.
-After each batch, check the timeline window and continue.
-Use global frame ranges.
-Return only a short completion summary after get_sound_timeline confirms edits.
+Execute by mutating current `VideoAsset.sound_timeline`.
+Use incremental 3-scene batches: batch reads, write batch events, verify local
+timeline window, then continue. Respect assigned scenes/frames as full scope
+for this run.

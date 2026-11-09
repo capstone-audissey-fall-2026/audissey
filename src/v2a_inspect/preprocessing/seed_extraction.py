@@ -8,10 +8,17 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
+from pydantic import Field
 
 from v2a_inspect.config import settings
 from v2a_inspect.llm import model_manager
-from v2a_inspect.models import InitialScene, InitialSceneAnalysis, Keyframe
+from v2a_inspect.models import (
+    InitialScene,
+    InitialSceneAnalysis,
+    Keyframe,
+    ObjectSeed,
+    SchemaModel,
+)
 from v2a_inspect.observability import build_langchain_config
 from v2a_inspect.prompts.manager import PromptManager
 
@@ -25,13 +32,44 @@ def analyze_initial_scene(
         content_blocks=_image_blocks(initial_scene.keyframes),
     )
     chat_model = model or model_manager.small
-    chain = prompt | chat_model.with_structured_output(InitialSceneAnalysis)
+    chain = prompt | chat_model.with_structured_output(_InitialSceneAnalysisOutput)
     result = chain.invoke(
         _scene_inputs(initial_scene),
         config=_trace_config(initial_scene),
     )
-    analysis = InitialSceneAnalysis.model_validate(result)
+    analysis = _to_initial_scene_analysis(
+        _InitialSceneAnalysisOutput.model_validate(result)
+    )
     return initial_scene.model_copy(update={"initial_analysis": analysis})
+
+
+class _ObjectSeedOutput(SchemaModel):
+    label: str
+    tracking_prompt: str | None = None
+    seed_frame_index: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class _InitialSceneAnalysisOutput(SchemaModel):
+    rough_description: str
+    object_seeds: list[_ObjectSeedOutput] = Field(default_factory=list)
+
+
+def _to_initial_scene_analysis(
+    output: _InitialSceneAnalysisOutput,
+) -> InitialSceneAnalysis:
+    return InitialSceneAnalysis(
+        rough_description=output.rough_description,
+        object_seeds=[
+            ObjectSeed(
+                label=object_seed.label,
+                tracking_prompt=object_seed.tracking_prompt,
+                seed_frame_index=object_seed.seed_frame_index,
+                notes=object_seed.notes,
+            )
+            for object_seed in output.object_seeds
+        ],
+    )
 
 
 def analyze_initial_scenes(

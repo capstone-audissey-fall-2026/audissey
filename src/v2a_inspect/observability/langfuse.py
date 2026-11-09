@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from importlib import import_module
+import logging
 from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
 
 from v2a_inspect.config import settings
+
+logger = logging.getLogger(__name__)
 
 _UNINITIALIZED = object()
 _langfuse_client: Any | None | object = _UNINITIALIZED
@@ -49,18 +52,18 @@ def get_langfuse_client() -> Any | None:
 
 
 def create_langfuse_handler() -> Any | None:
-    if get_langfuse_client() is None:
-        return None
-
     try:
+        if get_langfuse_client() is None:
+            return None
         langfuse_langchain_module = import_module("langfuse.langchain")
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install v2a-inspect[observability] to use Langfuse tracing."
-        ) from exc
-
-    callback_handler_class = langfuse_langchain_module.CallbackHandler
-    return callback_handler_class()
+        callback_handler_class = langfuse_langchain_module.CallbackHandler
+        handler = callback_handler_class()
+        if hasattr(handler, "raise_error"):
+            handler.raise_error = False
+        return handler
+    except Exception as exc:  # noqa: BLE001 - tracing must not break the pipeline.
+        logger.warning("Langfuse tracing disabled: %s", exc)
+        return None
 
 
 def build_langchain_config(

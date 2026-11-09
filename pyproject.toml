@@ -7,7 +7,10 @@ module-name = ["v2a_inspect"]
 module-root = "src"
 
 [tool.uv-build]
-include = ["src/v2a_inspect/prompts/files/**/*.txt"]
+include = [
+    "src/v2a_inspect/prompts/files/**/*.txt",
+    "src/v2a_inspect/ui/*.html",
+]
 
 [project]
 name = "v2a-inspect"
@@ -16,7 +19,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11,<=3.14"
 dependencies = [
-    "dotenv>=0.9.9",
+    "python-dotenv>=1.0.0",
     "langchain>=1.2.12",
     "langchain-google-genai>=4.0.0",
     "langchain-openai>=1.1.14",
@@ -28,6 +31,12 @@ dependencies = [
     "av>=17.0.1",
     "pillow>=11.3.0",
     "pycocotools>=2.0.11",
+    "moviepy>=2.2.1",
+    "openai>=2.29.0",
+    "elevenlabs>=2.51.0",
+    "scipy>=1.17.1",
+    "numpy>=2.4.3",
+    "typer>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -35,12 +44,13 @@ observability = [
     "langfuse>=3.9.0",
 ]
 ui = [
-    "streamlit>=1.55.0",
-    "streamlit-authenticator>=0.4.2",
+    "fastapi>=0.136.1",
+    "python-multipart>=0.0.28",
+    "uvicorn[standard]>=0.46.0",
 ]
 
 [project.scripts]
-v2a-inspect = "v2a_inspect.cli:main"
+v2a = "v2a_inspect.cli:main"
 
 [dependency-groups]
 dev = [

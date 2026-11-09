@@ -1,24 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
 
 from PIL import Image, ImageDraw, ImageFont
 
-from v2a_inspect.models import SoundEvent, SoundSource, VideoAsset
+from v2a_inspect.models import SoundEvent, SoundTrack, VideoAsset
 
 from .colors import Color
 
 _TRACK_COLORS: dict[str, Color] = {
-    "dialogue": (35, 120, 220),
+    "speech": (35, 120, 220),
     "sfx": (230, 85, 40),
-    "music": (145, 70, 200),
     "ambience": (50, 160, 80),
 }
 _TRACK_ORDER: dict[str, int] = {
-    "dialogue": 0,
+    "speech": 0,
     "sfx": 1,
-    "music": 2,
-    "ambience": 3,
+    "ambience": 2,
 }
 _SCENE_BOUNDARY_COLOR: Color = (225, 225, 225)
 _TEXT_COLOR: Color = (25, 25, 25)
@@ -28,23 +28,26 @@ SoundTimelineSummaryValue = int | float | str | None
 TimelineFont = ImageFont.ImageFont | ImageFont.FreeTypeFont
 
 
+@dataclass
+class _SoundTrackGroup:
+    track: SoundTrack
+    events: list[SoundEvent]
+
+
 def render_sound_timeline(
     video_asset: VideoAsset,
     *,
     width: int = 1400,
     row_height: int = 30,
 ) -> Image.Image:
-    """Render the final SoundTimeline as a frame-index timeline."""
+    """Render the final SoundTimeline as SoundTrack rows."""
 
     timeline = video_asset.sound_timeline
     if timeline is None:
         raise ValueError("video_asset must have a sound_timeline")
 
-    sorted_events = _sorted_events(timeline.sound_events)
-    source_by_id = {
-        sound_source.sound_source_id: sound_source
-        for sound_source in timeline.sound_sources
-    }
+    sorted_events = _sorted_events(timeline.sound_events, timeline.sound_tracks)
+    track_groups = _group_sound_events(sorted_events, timeline.sound_tracks)
 
     label_width = 270
     right_padding = 24
@@ -53,7 +56,7 @@ def render_sound_timeline(
     timeline_left = label_width
     timeline_right = width - right_padding
     usable_width = timeline_right - timeline_left
-    height = max(120, top_padding + (len(sorted_events) * row_height) + bottom_padding)
+    height = max(120, top_padding + (len(track_groups) * row_height) + bottom_padding)
 
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
@@ -64,6 +67,7 @@ def render_sound_timeline(
         (
             f"{len(sorted_events)} sound events, "
             f"{len(timeline.sound_sources)} sources, "
+            f"{len(timeline.sound_tracks)} tracks, "
             f"{video_asset.frame_count} frames, "
             f"{video_asset.duration_sec:.1f}s"
         ),
@@ -80,17 +84,12 @@ def render_sound_timeline(
     )
     _draw_legend(draw, timeline_left, 38, font)
 
-    for row_index, event in enumerate(sorted_events):
+    for row_index, group in enumerate(track_groups):
         row_y = top_padding + (row_index * row_height)
-        source = (
-            None
-            if event.sound_source_id is None
-            else source_by_id.get(event.sound_source_id)
-        )
-        color = _TRACK_COLORS[event.track_type]
+        color = _TRACK_COLORS[group.track.track_type]
         draw.text(
             (12, row_y + 7),
-            _row_label(event, source),
+            _short_label(_track_row_label(group.track), max_length=42),
             fill=_TEXT_COLOR,
             font=font,
         )
@@ -103,16 +102,17 @@ def render_sound_timeline(
             ),
             fill=(240, 240, 240),
         )
-        _draw_event_bar(
-            draw,
-            event,
-            total_frames,
-            timeline_left,
-            usable_width,
-            row_y,
-            color,
-            font,
-        )
+        for event in group.events:
+            _draw_event_bar(
+                draw,
+                event,
+                total_frames,
+                timeline_left,
+                usable_width,
+                row_y,
+                color,
+                font,
+            )
 
     if timeline.notes is not None:
         draw.text((12, height - 24), timeline.notes[:180], fill=_MUTED_TEXT_COLOR)
@@ -131,38 +131,75 @@ def summarize_sound_timeline(
         sound_source.sound_source_id: sound_source
         for sound_source in timeline.sound_sources
     }
+    track_by_id = {track.sound_track_id: track for track in timeline.sound_tracks}
     rows: list[dict[str, SoundTimelineSummaryValue]] = []
-    for event in _sorted_events(timeline.sound_events):
+    for event in _sorted_events(timeline.sound_events, timeline.sound_tracks):
+        track = track_by_id[event.sound_track_id]
         source = (
             None
-            if event.sound_source_id is None
-            else source_by_id.get(event.sound_source_id)
+            if track.sound_source_id is None
+            else source_by_id.get(track.sound_source_id)
         )
         frame_count = event.end_frame_index - event.start_frame_index
         rows.append(
             {
                 "sound_event_id": str(event.sound_event_id),
-                "track_type": event.track_type,
+                "sound_track_id": str(event.sound_track_id),
+                "track_label": track.label,
+                "track_type": track.track_type,
                 "start_frame_index": event.start_frame_index,
                 "end_frame_index": event.end_frame_index,
                 "frame_count": frame_count,
                 "duration_sec": frame_count / video_asset.fps,
                 "description": event.description,
+                "spoken_text": event.spoken_text,
                 "sound_source_id": None
-                if event.sound_source_id is None
-                else str(event.sound_source_id),
+                if track.sound_source_id is None
+                else str(track.sound_source_id),
                 "source_label": None if source is None else source.label,
-                "generation_mode": event.generation_mode,
+                "generation_model": track.generation_model,
             }
         )
     return rows
 
 
-def _sorted_events(events: list[SoundEvent]) -> list[SoundEvent]:
+def _group_sound_events(
+    events: list[SoundEvent],
+    tracks: list[SoundTrack],
+) -> list[_SoundTrackGroup]:
+    track_by_id = {track.sound_track_id: track for track in tracks}
+    events_by_track_id: dict[UUID, list[SoundEvent]] = {
+        track.sound_track_id: [] for track in tracks
+    }
+    for event in events:
+        events_by_track_id[event.sound_track_id].append(event)
+    groups = [
+        _SoundTrackGroup(track=track_by_id[track_id], events=track_events)
+        for track_id, track_events in events_by_track_id.items()
+        if track_events
+    ]
+    return sorted(groups, key=_track_group_sort_key)
+
+
+def _track_group_sort_key(group: _SoundTrackGroup) -> tuple[int, str, int, str]:
+    return (
+        _TRACK_ORDER[group.track.track_type],
+        group.track.label.lower(),
+        min(event.start_frame_index for event in group.events),
+        str(group.track.sound_track_id),
+    )
+
+
+def _sorted_events(
+    events: list[SoundEvent],
+    tracks: list[SoundTrack],
+) -> list[SoundEvent]:
+    track_by_id = {track.sound_track_id: track for track in tracks}
     return sorted(
         events,
         key=lambda event: (
-            _TRACK_ORDER[event.track_type],
+            _TRACK_ORDER[track_by_id[event.sound_track_id].track_type],
+            track_by_id[event.sound_track_id].label.lower(),
             event.start_frame_index,
             event.end_frame_index,
             event.description,
@@ -170,10 +207,8 @@ def _sorted_events(events: list[SoundEvent]) -> list[SoundEvent]:
     )
 
 
-def _row_label(event: SoundEvent, source: SoundSource | None) -> str:
-    if source is None:
-        return event.track_type
-    return f"{event.track_type}: {source.label}"
+def _track_row_label(track: SoundTrack) -> str:
+    return f"{track.track_type}: {track.label}"
 
 
 def _draw_event_bar(
@@ -250,8 +285,8 @@ def _draw_legend(
         x += 92
 
 
-def _track_types() -> tuple[Literal["dialogue", "sfx", "music", "ambience"], ...]:
-    return ("dialogue", "sfx", "music", "ambience")
+def _track_types() -> tuple[Literal["speech", "sfx", "ambience"], ...]:
+    return ("speech", "sfx", "ambience")
 
 
 def _frame_to_x(

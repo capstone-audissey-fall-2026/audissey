@@ -1,33 +1,110 @@
 # V2A Inspect
 
-## Project Structure
-This project consists of two parts. The AI inference server, and the main python module where the agent runtime exists.
+V2A Inspect turns a video into an editable sound timeline, routes each track to
+the appropriate audio model, and mixes the generated audio back into the video.
 
-### AI Inference Server
+## Entrypoints
 
-The server runtime that runs AI inference. Server code is in `server/`
+- `uv run v2a run VIDEO`: analyze a video and export a `VideoAsset` JSON.
+- `uv run v2a ui`: open the upload, timeline-editing, generation, and preview UI.
+- `uv run v2a synthesize`: generate audio from an exported asset or timeline.
+- `uv run --project server v2a-inspect-server serve`: run the inference API.
 
-#### Supported Models
+The commands are one-shot CLI/UI entrypoints. The sound-timeline inference stage
+uses LangGraph internally; it is not an interactive CLI loop.
 
-1. SAM3: Image segmentation and tracking with natural language prompts
-2. DINO v2: Image embedding generation
-3. SigLIP2: Image and text embedding generation (for simillarity search)
+## Local setup
 
-#### Code Structure
-- `models/`: Holds the API request and response models.
-- `inference/`: The AI model inference code
-- `runtime.py`: Entrypoint for `v2a-inspect-server` CLI command
-- `settings.py`: Pydantic setting config
-- `app.py`: FastAPI routes
+```bash
+cp .env.example .env
+uv sync --extra ui
+uv sync --project server
+(cd web && npm ci && npm run build)
+```
 
+The UI serves the built frontend from `web/dist`, so the build step is required
+before `v2a ui` shows anything. Use Node 20.19+ or 22.12+ (Vite 7).
 
-### Agent Runtime
+Add a Gemini API key to `.env`, then start the inference server and UI in
+the repository-owned virtual environments with one command:
 
-The agent runtime is where agentic video to multitrack audio pipeline runs. Code is in `src/`
+```bash
+./scripts/start-local.sh
+```
 
-#### Code Structure
-- `client`: API client for the AI inference server. Designed to not depend on anything.
-- `config`: Pydantic setting config
-- `models`: Pydantic models used for data
-- `prompts`: Prompt manager for the agent. Includes prompts as .txt file that is embedded to the python module when built.
-- `preprocessing`: Preprocessing pipeline.
+This runs both processes as the invoking host user, using `.venv` for the UI
+and `server/.venv` for GPU inference. Press `Ctrl+C` to stop both. Docker
+containers use image-local environments instead of these host environments.
+
+Open `http://127.0.0.1:8501`. The UI flow is:
+
+1. Upload a video and run visual/agent inference.
+2. Edit sound tracks and events in the timeline.
+3. Generate routed audio.
+4. Play event/track audio or preview and download the mixed video.
+
+Speech tracks use Kokoro TTS and require `spoken_text`. SFX and ambience default
+to text-to-audio; use V2A only for sounds that require precise synchronization
+with visible motion. Kokoro downloads its model on the first speech request.
+
+## Sample data
+
+`samples/` holds a 7-second clip and its analyzed `VideoAsset` (scenes, object
+tracks, and an agent-generated sound timeline). To edit without running the
+analysis, open the UI and use **Import asset** with `samples/sample.mp4` and
+`samples/sample.video-asset.json`. Then edit the timeline and run
+`Generate Audio` (needs the inference server and a GPU). Keyframe images and the
+SAM3 overlay are not included, so those previews stay empty until you run the
+analysis yourself.
+
+## Frontend development
+
+Run the UI backend and the Vite dev server separately:
+
+```bash
+uv run v2a ui                  # terminal 1, port 8501
+cd web && npm ci && npm run dev   # terminal 2, proxies /api and /events to 8501
+```
+
+## Tests
+
+```bash
+uv run python -m unittest discover tests
+uv run --project server python -m unittest discover server/tests
+(cd web && npm test)
+```
+
+## Prerequisites
+
+- Linux with an NVIDIA GPU for the inference server (SAM3, Hunyuan V2A).
+- A Gemini API key (`GEMINI_API_KEY`) for the analysis and timeline agent.
+- Hunyuan weights (about 8 GB) and Kokoro download automatically on first use.
+- SAM3 is installed from `facebookresearch/sam3`; its checkpoint may need a
+  Hugging Face account with access (set `HF_TOKEN` in `.env`).
+
+## Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+This starts both services with the UI available only on
+`http://127.0.0.1:8501`. The inference API is reachable only by the UI on the
+private Compose network. Set `V2A_DOCKER_UID` and `V2A_DOCKER_GID` in `.env`
+to `id -u` and `id -g`; the inference process then runs as that host user.
+Set `V2A_GPU_DEVICE` to the physical GPU index assigned to the inference
+container. Only that GPU is exposed, and all CUDA models use it as `cuda:0`.
+Model files remain in the `v2a_server_data` volume across container restarts.
+
+## Packages
+
+- `src/v2a_inspect/`: main CLI, agent pipeline, editor API, and inference clients.
+- `web/`: React timeline editor.
+- `server/`: GPU inference API for SAM3, Hunyuan V2A, and Kokoro TTS.
+- `tests/` and `server/tests/`: lightweight regression tests.
+- `scripts/run.sh`: batch wrapper around `v2a run`.
+
+Runtime media, generated outputs, virtual environments, and downloaded model
+weights are intentionally ignored by Git. Copy `.env.example` to `.env`; never
+commit real credentials.

@@ -17,6 +17,7 @@ class ObjectSeed(SchemaModel):
 
     label: str
     tracking_prompt: str | None = None
+    seed_frame_index: int | None = Field(default=None, ge=0)
 
     notes: str | None = None
 

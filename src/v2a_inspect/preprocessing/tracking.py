@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from pathlib import Path
 
 from v2a_inspect.client import SAM3Client
+from v2a_inspect.client.endpoints.base import ClientError
 from v2a_inspect.client.models import Sam3Track, Sam3TrackPoint
 from v2a_inspect.media_utils import resize_coco_rle
 from v2a_inspect.models import (
@@ -14,6 +16,9 @@ from v2a_inspect.models import (
     SceneTrackPoint,
     VideoAsset,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 async def track_initial_scene_object_seeds(
@@ -37,25 +42,40 @@ async def track_initial_scene_object_seeds(
     if initial_scene.initial_analysis is None:
         return initial_scene
 
-    resolved_seed_frame_index = _seed_frame_index(initial_scene, seed_frame_index)
     scene_tracks: list[SceneTrack] = []
 
     for object_seed in initial_scene.initial_analysis.object_seeds:
         tracking_prompt = _tracking_prompt(object_seed)
+        resolved_seed_frame_index = _seed_frame_index(
+            initial_scene,
+            object_seed=object_seed,
+            seed_frame_index=seed_frame_index,
+        )
         seed = SAM3Client.seed_from_prompt(
             tracking_prompt,
             frame_index=resolved_seed_frame_index,
         )
-        response = await sam_client.track_video(
-            video_id,
-            seeds=[seed],
-            start_frame_index=initial_scene.start_frame_index,
-            end_frame_index=initial_scene.end_frame_index,
-            score_threshold=score_threshold,
-            min_points=min_points,
-            high_confidence_threshold=high_confidence_threshold,
-            match_threshold=match_threshold,
-        )
+        try:
+            response = await sam_client.track_video(
+                video_id,
+                seeds=[seed],
+                start_frame_index=initial_scene.start_frame_index,
+                end_frame_index=initial_scene.end_frame_index,
+                score_threshold=score_threshold,
+                min_points=min_points,
+                high_confidence_threshold=high_confidence_threshold,
+                match_threshold=match_threshold,
+            )
+        except ClientError as exc:
+            if not _is_seed_tracking_failure(exc):
+                raise
+            logger.warning(
+                "Skipping object seed %s in scene %s: %s",
+                object_seed.label,
+                initial_scene.initial_scene_id,
+                exc,
+            )
+            continue
         for sam_track in response.tracks:
             scene_track = _scene_track_from_sam_track(
                 sam_track,
@@ -142,27 +162,54 @@ def _validate_scene_indexes(scene_indexes: set[int], scene_count: int) -> None:
 
 def _seed_frame_index(
     initial_scene: InitialScene,
+    *,
+    object_seed: ObjectSeed | None = None,
     seed_frame_index: int | None,
 ) -> int:
-    if seed_frame_index is None:
-        return (
-            initial_scene.start_frame_index + initial_scene.end_frame_index - 1
-        ) // 2
-    if (
-        not initial_scene.start_frame_index
-        <= seed_frame_index
-        < initial_scene.end_frame_index
-    ):
+    if seed_frame_index is not None:
+        if _is_frame_in_scene(initial_scene, seed_frame_index):
+            return seed_frame_index
         raise ValueError(
             "seed_frame_index must be inside the initial scene frame range"
         )
-    return seed_frame_index
+
+    if object_seed is not None and object_seed.seed_frame_index is not None:
+        if _is_frame_in_scene(initial_scene, object_seed.seed_frame_index):
+            return object_seed.seed_frame_index
+        logger.warning(
+            "Ignoring object seed frame %s outside scene %s range %s-%s",
+            object_seed.seed_frame_index,
+            initial_scene.initial_scene_id,
+            initial_scene.start_frame_index,
+            initial_scene.end_frame_index,
+        )
+
+    return _midpoint_frame_index(initial_scene)
+
+
+def _is_frame_in_scene(initial_scene: InitialScene, frame_index: int) -> bool:
+    return (
+        initial_scene.start_frame_index <= frame_index < initial_scene.end_frame_index
+    )
+
+
+def _midpoint_frame_index(initial_scene: InitialScene) -> int:
+    return (initial_scene.start_frame_index + initial_scene.end_frame_index - 1) // 2
 
 
 def _tracking_prompt(object_seed: ObjectSeed) -> str:
     if object_seed.tracking_prompt:
         return object_seed.tracking_prompt
     return object_seed.label
+
+
+def _is_seed_tracking_failure(exc: ClientError) -> bool:
+    message = str(exc)
+    return (
+        "No points are provided" in message
+        or "HTTP 400" in message
+        or "HTTP 422" in message
+    )
 
 
 def _scene_track_from_sam_track(
