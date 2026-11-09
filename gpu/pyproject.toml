@@ -7,6 +7,9 @@ dependencies = [
     "torch",
     "torchaudio",
     "torchvision",
+    "torchcodec",
+    # sam-audio@bb4c699 calls hub APIs removed in huggingface-hub 1.0 (proxies, resume_download).
+    "huggingface-hub<1.0",
     "sam-audio @ git+https://github.com/facebookresearch/sam-audio@bb4c6999d2677c7402360e426afc01ddfad6dce0",
 ]
 
@@ -18,6 +21,7 @@ audyssey = { path = "..", editable = true }
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
+torchcodec = { index = "pytorch-cu128" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
