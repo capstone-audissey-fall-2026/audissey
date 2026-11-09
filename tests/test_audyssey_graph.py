@@ -205,3 +205,60 @@ class GraphTests(unittest.TestCase):
         job = graph.analyze(self.job, self.ctx)
         self.assertFalse(job.sources[0].keep)
         self.assertEqual(job.sources[1].gain, 0.5)
+
+    def test_hint_not_found_triggers_replan(self):
+        from audyssey.contracts import GroundResult, VisualHint
+        feedback = []
+        hint = VisualHint(time=1, box=(0, 0, .5, 1), description='ghost')
+        def plan(video, audio, duration, issues):
+            feedback.append(issues)
+            return [SourcePlan(name='a', kind='sfx', description='sound', visual_hint=hint if not issues else None)]
+        self.ctx.tools = replace(self.ctx.tools, plan=plan, validate_plan=lambda *args: [], locate=lambda *args: GroundResult(found=False))
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, 'ready')
+        self.assertEqual(len(feedback), 2)
+        self.assertEqual(feedback[1][0].kind, 'visual_hint_not_found')
+        self.assertEqual(feedback[1][0].source_name, 'a')
+
+    def test_locate_exception_becomes_issue(self):
+        from audyssey.contracts import VisualHint
+        hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
+        def fail(*args):
+            raise RuntimeError('grounder unavailable')
+        self.ctx.settings.max_plan_rounds = 1
+        self.ctx.tools = replace(self.ctx.tools, plan=lambda *args: [SourcePlan(name='a', kind='sfx', description='sound', visual_hint=hint)], validate_plan=lambda *args: [], locate=fail)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, 'ready')
+        self.assertEqual(job.plan_issues[0].kind, 'visual_hint_not_found')
+        self.assertIn('grounder unavailable', job.plan_issues[0].message)
+
+    def test_masked_video_passed_to_separate_only_with_hint(self):
+        from audyssey.contracts import VisualHint
+        from unittest.mock import Mock
+        extract_audio(self.directory / 'input.mp4', self.directory / 'mono.wav', True)
+        self.job.mono_path = 'mono.wav'
+        mask = Mock(side_effect=lambda video, hint, out: out)
+        separate = Mock(wraps=self.ctx.tools.separate)
+        self.ctx.tools = replace(self.ctx.tools, mask_video=mask, separate=separate)
+        source = Source(id='s1', plan=SourcePlan(name='a', kind='sfx', description='sound'))
+        graph.process_source(self.job, source, self.ctx)
+        mask.assert_not_called()
+        self.assertEqual(separate.call_args.args[2], self.directory / 'input.mp4')
+        source.plan.visual_hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual(separate.call_args.args[2], self.directory / 'masks/s1.mp4')
+        mask.assert_called_once_with(self.directory / 'input.mp4', source.plan.visual_hint, self.directory / 'masks/s1.mp4')
+
+    def test_mask_failure_fails_only_that_source(self):
+        from audyssey.contracts import VisualHint
+        original = self.ctx.tools.plan
+        def plan(*args):
+            plans = original(*args)
+            plans[0].visual_hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
+            return plans
+        def fail(*args):
+            raise RuntimeError('mask failed')
+        self.ctx.tools = replace(self.ctx.tools, plan=plan, mask_video=fail)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, 'ready')
+        self.assertEqual([s.status for s in job.sources], ['failed', 'done', 'done'])

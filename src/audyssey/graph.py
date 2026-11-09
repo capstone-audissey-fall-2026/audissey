@@ -87,10 +87,15 @@ def process_source(job: Job, source: Source, ctx: Context) -> None:
                     max_rounds=maximum,
                 ),
             )
+            video = directory / job.video_path
+            if source.plan.visual_hint is not None:
+                video = ctx.tools.mask_video(
+                    video, source.plan.visual_hint, directory / f"masks/{source.id}.mp4"
+                )
             path = ctx.tools.separate(
                 directory / job.mono_path,
                 source.plan,
-                directory / job.video_path,
+                video,
                 directory / f"tracks/{source.id}.wav",
                 source.attempts,
             )
@@ -262,6 +267,23 @@ def analyze(job: Job, ctx: Context) -> Job:
             directory / job.audio_path,
             [s.plan for s in job.sources],
         )
+        for source in job.sources:
+            hint = source.plan.visual_hint
+            if hint is None:
+                continue
+            try:
+                found = ctx.tools.locate(directory / job.video_path, hint).found
+                message = "visual hint target was not found"
+            except Exception as exc:
+                found, message = False, str(exc)
+            if not found:
+                issues.append(
+                    PlanIssue(
+                        source_name=source.plan.name,
+                        kind="visual_hint_not_found",
+                        message=message,
+                    )
+                )
         job.plan_issues = issues
         update_step(
             job,
