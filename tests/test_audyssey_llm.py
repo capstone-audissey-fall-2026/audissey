@@ -34,3 +34,25 @@ class LlmTests(unittest.TestCase):
     def test_chat_client_allows_keyless_local_server(self):
         with chat_client(Settings(planner_base_url='http://localhost:8000/v1', planner_api_key='')) as client:
             self.assertEqual(client.api_key, 'unused')
+
+    def test_provider_errors_exclude_keys_from_exceptions_and_traces(self):
+        from langsmith import Client
+        from langsmith.run_helpers import tracing_context
+        from openai import AuthenticationError, DefaultHttpxClient
+        import httpx2 as sdk_httpx
+        from unittest.mock import Mock
+        key = 'secret-planner-key'
+        settings = Settings(planner_base_url='http://llm/v1', planner_api_key=key)
+        trace_client = Mock(spec=Client)
+        def respond(request):
+            return sdk_httpx.Response(401, json={'error': {'message': 'Invalid API key: ' + key}})
+        with chat_client(settings) as client:
+            client._client.close()
+            client._client = DefaultHttpxClient(transport=sdk_httpx.MockTransport(respond))
+            with tracing_context(enabled=True, client=trace_client):
+                with self.assertRaises(AuthenticationError) as caught:
+                    client.chat.completions.create(model='m', messages=[{'role': 'user', 'content': 'hello'}])
+            self.assertEqual(caught.exception.status_code, 401)
+            self.assertNotIn(key, str(caught.exception))
+            trace_client.update_run.assert_called_once()
+            self.assertNotIn(key, str(trace_client.mock_calls))

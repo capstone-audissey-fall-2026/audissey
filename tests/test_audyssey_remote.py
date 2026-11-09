@@ -113,3 +113,16 @@ class RemoteTests(unittest.TestCase):
                 self.assertIn(self.urls[0], str(caught.exception))
                 self.assertNotIn(token, str(caught.exception))
                 self.assertIn('500' if isinstance(failure, httpx.Response) else type(failure).__name__, str(caught.exception))
+
+    def test_error_urls_exclude_credentials_and_query(self):
+        from audyssey.tools.remote import post
+        url = 'http://user:secret-url-password@gpu:8700?api_key=secret-query-key'
+        for failure in [httpx.Response(401), httpx.ConnectError('secret-url-password')]:
+            kwargs = {'return_value': failure} if isinstance(failure, httpx.Response) else {'side_effect': failure}
+            with self.subTest(failure=type(failure).__name__), patch('httpx.post', **kwargs):
+                with self.assertRaises(RuntimeError) as caught:
+                    post(url, '/separate', {}, {}, 'secret-tool-token', 1)
+                message = str(caught.exception)
+                self.assertIn('http://gpu:8700', message)
+                for secret in ['secret-url-password', 'secret-query-key', 'secret-tool-token']:
+                    self.assertNotIn(secret, message)

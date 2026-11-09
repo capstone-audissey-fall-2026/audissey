@@ -9,7 +9,11 @@ def post(
     token: str,
     timeout: float,
 ) -> httpx.Response:
-    endpoint = url.rstrip("/") + path
+    base = httpx.URL(url)
+    endpoint = base.copy_with(path=base.path.rstrip("/") + path)
+    display_url = endpoint.copy_with(
+        username=None, password=None, query=None, fragment=None
+    )
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         response = httpx.post(
@@ -18,8 +22,8 @@ def post(
     except httpx.RequestError as exc:
         # Transport messages and response bodies may contain credentials.
         raise RuntimeError(
-            f"tool server {endpoint} failed: {type(exc).__name__}"
+            f"tool server {display_url} failed: {type(exc).__name__}"
         ) from None
     if not response.is_success:
-        raise RuntimeError(f"tool server {endpoint} failed: {response.status_code}")
+        raise RuntimeError(f"tool server {display_url} failed: {response.status_code}")
     return response
