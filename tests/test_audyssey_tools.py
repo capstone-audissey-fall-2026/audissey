@@ -38,3 +38,21 @@ class ToolsTests(unittest.TestCase):
             self.assertEqual(data.shape, (144000, 1))
             self.assertTrue(np.all(data[:43200] == 1))
             self.assertTrue(np.all(data[43200:] == 0))
+
+    def test_load_tools_defaults_to_stub(self):
+        from audyssey.tools import load_tools
+        from audyssey.settings import Settings
+
+        tools = load_tools(Settings())
+        self.assertIs(tools.plan, planning.plan)
+        self.assertIs(tools.validate_plan, planning.validate_plan)
+        self.assertIs(tools.separate, separation.separate)
+        self.assertIs(tools.judge, filtering.judge)
+
+    def test_load_tools_real_raises_not_implemented(self):
+        from audyssey.tools import load_tools
+        from audyssey.settings import Settings
+
+        tools = load_tools(Settings(planner="real"))
+        with self.assertRaises(NotImplementedError):
+            tools.plan(Path("video"), Path("audio"), 3, [])
