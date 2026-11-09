@@ -417,7 +417,9 @@ async def run_event_audio_regeneration_pipeline(
         if timeline is None:
             raise ValueError("No sound timeline found in video asset.")
 
-        event, track = _event_context(timeline.sound_events, timeline.sound_tracks, sound_event_id)
+        event, track = _event_context(
+            timeline.sound_events, timeline.sound_tracks, sound_event_id
+        )
         next_description = description.strip()
         if not next_description:
             raise ValueError("Audio prompt is required.")
@@ -584,7 +586,9 @@ async def _rebuild_audio_outputs(
         items = track_items.get(str(track.sound_track_id), [])
         if not items:
             continue
-        track_path = _track_audio_path(track_dir, str(track.sound_track_id), track.label)
+        track_path = _track_audio_path(
+            track_dir, str(track.sound_track_id), track.label
+        )
         stem_path = await asyncio.to_thread(
             mix_audio_items_to_wav,
             items,

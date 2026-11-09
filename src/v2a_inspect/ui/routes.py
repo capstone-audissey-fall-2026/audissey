@@ -469,14 +469,12 @@ def _summary_payload(snapshot: VideoAssetSnapshot) -> dict[str, object]:
         "audio_tracks": []
         if asset is None
         else [
-            item.model_dump(mode="json")
-            for item in asset.sound_track_audio_artifacts
+            item.model_dump(mode="json") for item in asset.sound_track_audio_artifacts
         ],
         "audio_events": []
         if asset is None
         else [
-            item.model_dump(mode="json")
-            for item in asset.sound_event_audio_artifacts
+            item.model_dump(mode="json") for item in asset.sound_event_audio_artifacts
         ],
     }
 
