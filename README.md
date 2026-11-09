@@ -29,12 +29,16 @@ uv run ty check --error-on-warning src/
 | `AUDYSSEY_MAX_SEPARATION_RETRIES` | `2` | 재분리 횟수, 총 시도 최대 3회 |
 | `AUDYSSEY_MAX_DURATION_S` | `30` | 업로드 영상 길이 상한 |
 | `AUDYSSEY_WORK_DIR` | `work/jobs` | 작업 폴더 위치 |
-| `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` | 향후 분리 모델 ID |
-| `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge` | 향후 필터링 모델 ID |
+| `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` | 분리 모델 ID |
+| `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge` | 필터링 모델 ID |
+| `AUDYSSEY_SAM_AUDIO_DEVICE` | `cuda` | 모델 장치 |
+| `AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES` | `1` | 분리 후보 수 (1 이상) |
+| `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS` | `false` | span이 없을 때 모델의 span 예측 |
+| `AUDYSSEY_JUDGE_PASS_THRESHOLD` | `0.5` | Judge 예시 기준, 아직 실측 보정 전 |
 
 설정은 환경변수로만 읽으며 `.env`는 읽지 않습니다. 작업은 `<WORK_DIR>/<id>/job.json`과 상대 경로 파일로 보존됩니다. 서버 재시작 후 `GET /api/jobs`와 `GET /api/jobs/{id}`로 다시 조회할 수 있습니다. 단일 서버 프로세스로 실행합니다. 실행 중 재분리·추가·합치기는 409를 반환하며 keep/drop과 음량·피치 변경은 허용합니다.
 
-팀원은 담당 `src/audyssey/tools/<모듈>/real.py`의 동일 시그니처 함수를 구현하고 `AUDYSSEY_PLANNER=real`, `AUDYSSEY_SEPARATOR=real`, `AUDYSSEY_FILTER=real` 중 해당 값을 설정합니다. 현재 real 함수는 담당자가 표시된 `NotImplementedError` placeholder입니다.
+팀원은 담당 `src/audyssey/tools/<모듈>/real.py`의 동일 시그니처 함수를 구현하고 `AUDYSSEY_PLANNER=real`, `AUDYSSEY_SEPARATOR=real`, `AUDYSSEY_FILTER=real` 중 해당 값을 설정합니다. 분리는 SAM Audio, 필터링은 SAM Audio Judge 예시로 구현되어 있습니다. 플래닝 real은 담당자가 구현할 placeholder입니다.
 
 - 도은: `planning/real.py`의 `plan`, `validate_plan`
 - SAM Audio 담당: `separation/real.py`의 `separate`
@@ -46,30 +50,125 @@ uv run ty check --error-on-warning src/
 [설계](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md) · [구현 계획](docs/superpowers/plans/2026-11-09-audyssey-skeleton.md)
 
 
-## GPU 서버에서 도구 띄우기
+## GPU 실행 상태
+
+dnn5(RTX A5000 24GB)에서 `facebook/sam-audio-small` 분리와 `facebook/sam-audio-judge`
+판정이 실제로 동작하는 것을 확인했습니다. 도구 서버 2개(GPU0·GPU1)와 main을 remote로
+연결한 E2E도 업로드 → ready → render까지 통과했습니다. 실측값은
+[설계 문서](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#sam-audio-실측-2026-11-10)에 있습니다.
+
+## 한 GPU 서버에서 전부 띄우기 (sv3-a100 등 Docker 되는 서버)
+
+NVIDIA Container Toolkit과 Docker Compose가 설치된 서버에서 실행합니다.
 
 ```bash
-uv sync --extra ui
-AUDYSSEY_TOOL_TOKEN=... uv run audyssey tool-server --tool separation --impl real --host 0.0.0.0 --port 8700
-# 다른 프로세스에서 같은 토큰으로:
-AUDYSSEY_TOOL_TOKEN=... uv run audyssey tool-server --tool filtering --impl real --host 0.0.0.0 --port 8701
+cp .env.example .env
+# .env의 AUDYSSEY_TOOL_TOKEN을 임의의 긴 토큰으로 교체
+# sv3-a100: HF_CACHE=/home/common/huggingface, AUDYSSEY_SEPARATION_GPU·AUDYSSEY_JUDGE_GPU로 GPU 지정
+docker compose up
+# http://localhost:8600 에서 samples/sample.mp4 업로드
 ```
 
-현재 real 구현은 placeholder입니다. GPU·가중치 없이 연결을 확인하려면 `--impl stub`을 씁니다. 모델 가중치는 이 작업에서 다운로드하지 않습니다. 서버당 모델 호출은 한 번에 하나씩 실행합니다. `GET /health`는 인증 없이 도구·구현을 보여줍니다. 외부 바인딩에는 토큰이 필수이며, 실제 토큰은 셸 기록에 직접 쓰지 말고 환경에서 주입합니다. 네트워크 구간은 TLS 프록시나 SSH 터널로 보호합니다.
+main, separation, judge 세 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
+연결되며 GPU 도구 포트는 호스트에 공개하지 않습니다. 원격 서버 UI는 SSH 터널로
+연결합니다. 작업은 `jobs` 볼륨에 남습니다. 플래너는 기본 stub입니다.
 
-메인 서버에서는 다음을 설정합니다. 두 도구가 같은 서버에 있을 필요는 없습니다.
+이미지는 `ghcr.io/capstone-audissey-fall-2026/audyssey-main:latest`와
+`ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest`입니다.
+처음 배포되어 있다면 `docker compose pull`, 직접 빌드하려면 `docker compose build`를
+먼저 실행합니다. main 반영 또는 수동 workflow 실행 시 GHCR에 latest와 커밋 SHA
+태그를 올립니다. PR에서는 업로드하지 않습니다. 이미지가 비공개면 GHCR 읽기 권한으로
+인증해야 합니다. 이 브랜치의 Docker 빌드·GPU 실측은 sandbox 때문에 대기 중입니다.
+
+## 노트북 + RunPod
+
+RunPod에서 GPU **Pod 하나**를 만들고 다음 값을 설정합니다.
+
+| 설정 | 값 |
+|---|---|
+| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest` |
+| GPU | GPU 1개, CUDA 12.8 지원 드라이버; 필요한 VRAM은 실측 대기 |
+| Expose HTTP ports | `8700` |
+| Container start command | 비워 두어 이미지 기본 CMD 사용 (분리와 Judge를 함께 실행) |
+| Network volume | 기존 가중치 캐시가 있는 볼륨을 `/workspace`에 연결 |
+| `HF_HOME` | `/workspace/huggingface` (볼륨 안의 실제 캐시 경로) |
+| `HF_HUB_OFFLINE` / `CUDA_VISIBLE_DEVICES` | `1` / `0` |
+| `AUDYSSEY_TOOL_TOKEN` | 노트북 .env와 같은 비밀 토큰 |
+| 모델 ID 2개 | `.env.example`의 `AUDYSSEY_SAM_AUDIO_MODEL`, `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` |
+
+Templates → New Template에서 이미지·포트·환경변수·시작 명령을 위 값으로 저장하고,
+Pod 배포 시 그 템플릿과 네트워크 볼륨을 고릅니다. 비밀 토큰은 공유 템플릿에 넣지
+말고 Pod 환경/RunPod secrets로 주입합니다. [템플릿 공식 안내](https://docs.runpod.io/pods/templates/manage-templates).
+
+노트북에서는 `.env.example`을 `.env`로 복사해 토큰과 두 도구의 주소를 넣습니다.
+
+```dotenv
+AUDYSSEY_SEPARATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
+AUDYSSEY_FILTER_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
+```
 
 ```bash
-export AUDYSSEY_SEPARATOR=remote
-export AUDYSSEY_SEPARATOR_URL=http://gpu:8700
-export AUDYSSEY_FILTER=remote
-export AUDYSSEY_FILTER_URL=http://gpu:8701
-export AUDYSSEY_TOOL_TOKEN=...
-export AUDYSSEY_REMOTE_TIMEOUT_S=600
-uv run audyssey serve
+docker compose up main
+# http://localhost:8600
 ```
 
-URL이 없으면 시작 시 오류가 납니다. 인증 오류(401), 서버 오류, 타임아웃은 해당 소스만 실패시킵니다. 토큰과 응답 본문은 오류 메시지에 넣지 않습니다.
+main에는 GPU가 필요 없습니다. RunPod GPU Pod 안에서는 Docker Compose를 실행할 수
+없으므로, 이미지 하나의 기본 CMD로 두 도구를 함께 실행합니다.
+[RunPod의 컨테이너 제한](https://docs.runpod.io/tutorials/pods/build-docker-images).
+
+## 가중치와 로컬 GPU 환경
+
+가중치는 이미지에 포함하지 않으며 서버가 내려받지 않도록 `HF_HUB_OFFLINE=1`을
+사용합니다. sv3-a100은 `/home/common/huggingface`를 `/hf:ro`로 연결합니다.
+RunPod는 사용자가 별도로 미리 준비한 네트워크 볼륨 캐시를 사용합니다. 공식
+`facebook/sam-audio-*`에는 HF 승인과 SAM License가 필요하고, 미러를 쓸 때도 사용
+권한을 확인해야 합니다. 체크포인트 외에 tokenizer·설정·보조 모델 캐시도 있어야 합니다.
+Judge의 고정 upstream은 `sam_audio` revision을 읽으므로 그 revision도 캐시에 필요합니다.
+이 작업에서는 가중치를 다운로드하거나 복사하지 않았습니다.
+
+SAM Audio 의존성의 numpy<2 조건 때문에 GPU 도구는 별도 Python 3.12 uv 프로젝트를
+씁니다. 루트 환경과 CI에는 torch를 설치하지 않습니다.
+
+```bash
+uv sync --project gpu --locked
+# torchcodec(cu128)가 쓰는 NVIDIA NPP 경로. Docker 이미지는 이미 설정되어 있음
+export LD_LIBRARY_PATH="$PWD/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:${LD_LIBRARY_PATH:-}"
+export HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 HF_HOME=/home/common/huggingface
+export AUDYSSEY_SAM_AUDIO_MODEL=mrfakename/sam-audio-large-tv
+export AUDYSSEY_SAM_AUDIO_JUDGE_MODEL=mrfakename/sam-audio-judge
+# AUDYSSEY_TOOL_TOKEN은 환경에서 주입
+uv run --project gpu --locked audyssey tool-server --tool separation --tool filtering --impl real --host 0.0.0.0 --port 8700
+```
+
+한 도구만 실행하려면 `--tool`을 하나만 줍니다. 공개 주소에는 토큰이 필수입니다.
+원격 연결은 TLS 프록시나 SSH 터널로 보호합니다. `GET /health`는 인증 없이
+`{"tools": ["separation", "filtering"], "impl": "real"}`을 반환합니다. 모델은 첫 호출에
+프로세스당 한 번 로드하고 호출을 직렬화합니다. span은 positive anchor로 전달하고,
+`attempt`를 시드로 써 재시도를 구분합니다. 출력은 원본 길이의 48 kHz float32 mono
+WAV입니다. 시각 힌트/SAM3는 다음 PR 범위입니다. Judge는 점수와 통과 여부만 내며
+suggestion은 없습니다. 기준값 0.5는 아직 보정되지 않은 예시입니다.
+
+GPU·가중치 없이 HTTP 연결만 확인하려면 루트 환경에서 `--impl stub`을 사용합니다.
+원격 모드는 `AUDYSSEY_SEPARATOR=remote`, `AUDYSSEY_FILTER=remote`, 두 URL과 같은
+토큰을 설정합니다. `AUDYSSEY_REMOTE_TIMEOUT_S` 기본값은 600초입니다. URL이 없으면
+시작 시 오류가 나며 인증·서버·타임아웃 오류는 해당 소스만 실패시킵니다.
+
+```bash
+# 위 offline/GPU 0/모델 ID 환경변수를 설정한 뒤
+uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --out work/jobs/smoke-text
+uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --span 0 3 --out work/jobs/smoke-span
+# CI와 같은 GPU 없는 환경
+uv sync --dev --locked --extra ui --extra llm
+uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 'numpy==1.26.4' python -m unittest discover tests
+```
+
+스모크 스크립트는 로딩·분리·Judge 시간, 최대 GPU 메모리, torch/CUDA 버전, 판정과
+결과 WAV 경로를 JSON으로 출력합니다.
+
+24GB GPU에 올리기 위해 분리 어댑터는 재순위 후보가 1개이고 구간 예측을 끈 기본 설정에서
+쓰지 않는 ranker와 span predictor를 GPU에 올리지 않습니다(SAM Audio가 None을 공식 지원).
+`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES`를 2 이상으로, `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS`를
+`true`로 바꾸면 해당 모듈을 함께 올리며 메모리가 크게 늘어납니다(small 전체 fp32 약 23GB).
 
 ## 플래너를 Gemini/vLLM에 연결하기
 

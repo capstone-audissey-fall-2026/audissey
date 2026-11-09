@@ -190,8 +190,10 @@ Command      = Keep | Drop | SetGain | SetPitch | Reseparate | AddSource | Rende
 ### 7.1 도구 함수
 각 도구는 함수 하나다. `stub`, `real`, 분리·필터링의 `remote` 구현은 같은 시그니처를 가진다.
 
+**real 구현 (2026-11-10)**: separation은 고정 SAM Audio commit `bb4c6999d2677c7402360e426afc01ddfad6dce0`의 텍스트·positive span API를 사용한다. `attempt` 시드를 적용하고 출력 길이를 맞춘다. filtering은 SAM Audio Judge 예시(윤석 교체 가능)이며 네 점수 중 있는 값을 반환하고 overall ≥ 0.5로 판정한다. suggestion은 None이다. 시각 힌트/SAM3는 아직 연결하지 않는다. GPU 의존성은 첫 호출에만 import하고 모델은 캐시·잠금으로 직렬화한다. 실측 상태는 §13을 따른다.
+
 **remote 모드**: `audyssey tool-server`가 분리·필터링 구현을 HTTP로 제공한다.
-- `GET /health`는 인증 없이 도구와 구현 이름을 반환한다.
+- `GET /health`는 인증 없이 `{"tools": [...], "impl": "..."}`을 반환한다. `--tool`을 반복해 같은 프로세스에서 두 도구를 제공할 수 있다.
 - 분리 서버의 `POST /separate`: multipart `mono`, `video`, `plan`(SourcePlan JSON), `attempt`; 응답은 WAV다.
 - 필터링 서버의 `POST /judge`: multipart `mono`, `track`, `plan`; 응답은 FilterResult JSON이다.
 - `AUDYSSEY_TOOL_TOKEN`이 있으면 `Authorization: Bearer <token>`을 요구하고, 틀리거나 빠지면 401이다. loopback 이외 주소에 바인딩하려면 토큰이 필수다.
@@ -263,7 +265,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
 - **도구 선택**
   - `AUDYSSEY_PLANNER`에는 `stub` 또는 `real`, `AUDYSSEY_SEPARATOR`, `AUDYSSEY_FILTER`에는 `stub`, `real`, `remote`를 넣는다. 기본값은 `stub`이다.
   - `real`로 선택된 모델은 처음 쓰는 시점에 불러온다. 서버 시작 시 미리 불러오지 않는다.
-- **도구 서버**: `AUDYSSEY_TOOL_TOKEN=... uv run audyssey tool-server --tool separation --impl real --host 0.0.0.0 --port 8700`. 필터링은 `--tool filtering --port 8701`로 별도 실행한다. 현재 real은 placeholder이므로 로컬 검증에는 `--impl stub`을 쓴다. 원격 연결은 TLS 프록시나 SSH 터널로 보호한다.
+- **도구 서버**: `AUDYSSEY_TOOL_TOKEN=... uv run --project gpu --locked audyssey tool-server --tool separation --impl real --host 0.0.0.0 --port 8700`. 필터링은 `--tool filtering --port 8701`로 별도 실행한다. separation real과 Judge 예시는 구현되었고 GPU 환경이 없는 HTTP 검증에는 루트 환경의 `--impl stub`을 쓴다. 원격 연결은 TLS 프록시나 SSH 터널로 보호한다.
 - **플래닝 real**: `AUDYSSEY_PLANNER_BASE_URL`, `AUDYSSEY_PLANNER_MODEL`, `AUDYSSEY_PLANNER_API_KEY`로 Gemini/vLLM의 OpenAI 호환 API를 직접 부른다. `planning/llm.py`의 `chat_client(settings)`를 쓰고 호출 시 `settings.planner_model`을 전달한다. 주소는 필수, 로컬 서버의 키는 생략할 수 있다. real 본체와 모델 선택은 도은 담당이다.
 - **관측**: LangSmith의 `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`로 켠다. 기본은 꺼져 있다. LangGraph 그래프, 네 도구, 명령, LLM 사용량을 기록한다. 명령 입력은 job_id와 명령만 남기며 키·토큰과 오디오·영상 바이트는 기록하지 않는다. 파일 경로와 메타데이터만 남긴다.
 - **전처리**: 길이를 검사하고, ffmpeg로 48kHz 원본 채널 오디오와 모노 오디오를 추출하고, 파형 피크를 만든다.
@@ -279,9 +281,9 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - keep, drop, gain, pitch는 언제든 받는다.
 - **의존성 (제안)**
   - 기본 설치에는 torch가 없다. 그래서 stub 모드는 노트북에서도 설치된다.
-  - real 도구용 의존성은 extras로 둔다: `[gpu]`(torch, sam-audio), `[llm]`(openai); GPU extra는 real 구현 시 추가한다.
+  - GPU 도구는 별도 `gpu/` uv 프로젝트(Python 3.12, numpy 1.26)로 둔다. 루트는 `[ui]`, `[llm]`을 쓰며 torch를 설치하지 않는다. PyTorch 계열은 공식 cu128 index로 풀고 남의 버전 제약은 덮어쓰지 않는다.
   - 기존 `server/`의 무거운 고정 의존성(flash-attn 휠 등)은 가져오지 않는다.
-- **Docker와 RunPod 가이드**: 뼈대 공유 직후 이어서 하는 작업이다.
+- **Docker와 RunPod**: `audyssey-main`(Python 3.13)과 `audyssey-sam-audio`(CUDA 12.8, Python 3.12) 이미지 두 개를 쓴다. compose는 main·separation·judge 컨테이너를 띄우고, RunPod는 GPU 이미지 기본 CMD로 두 도구를 한 Pod에서 제공한다. main만 띄울 때는 `docker compose up main`을 쓴다. 가중치는 포함하지 않고 HF 캐시를 읽기 전용 볼륨으로 연결한다. GHCR 워크플로는 main push 또는 수동 실행 시 latest·SHA 태그를 올린다. 상세 설정과 템플릿은 README를 따른다. 빌드와 실측은 §13의 sandbox 제한으로 아직 검증 대기다.
 
 ## 11. 코드 구조 (제안)
 
@@ -329,6 +331,13 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 15. 관측은 Langfuse 대신 LangSmith를 쓴다.
 16. 기존 `web/`는 PR #5에서 삭제했다. git 기록과 `legacy` 원격에 남아 있다.
 
+**2026-11-10 SAM Audio·GPU 환경·Docker 결정**
+- CI는 GPU 의존성 없이 가짜 torch/sam_audio 모듈로 어댑터를 검증한다. 기존 검사와 Python 3.12 + numpy 1.26 테스트를 함께 유지한다.
+- laion-clap의 numpy<2 제약 때문에 GPU 환경을 `gpu/`로 분리한다. audyssey의 numpy 최소값만 1.26으로 낮추고 외부 제약은 덮어쓰지 않는다.
+- 이미지는 설치 환경 단위로 만든다. 도구별 컨테이너는 compose로, RunPod는 이미지 하나 = Pod 하나다.
+- 설치 환경이 다른 도구가 생기면 그때 환경 여러 개를 담는 합친 이미지를 추가한다.
+- 도구 서버는 HTTP 창구가 없는 SAM 계열 모델용이다. LLM은 Gemini 또는 vLLM 공식 이미지로 별도 운영한다.
+
 **Claude가 정한 것 (제안)**: 30초 상한, 루프 한도 2회, 형식 검사의 위치, 나머지 계산 규칙과 나머지의 keep/gain, stub의 루프 유발 동작, render 출력 규칙, 실패 처리, 동시성, 저장 방식, 의존성 분리, API 형식, 코드 구조, 기존 코드 삭제 시점.
 
 ## 13. 미결정 / 확인 필요
@@ -337,12 +346,53 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 
 | 항목 | 누가, 언제 |
 |---|---|
+| SAM3 자동 그라운딩과 visual_hint 연결 | 다음 PR |
 | UI 디자인 | UI 담당, 뼈대 공유 후 |
 | Audio Editing 담당자 | 팀 |
 | 플래닝 real 모델(Qwen3-VL / Qwen3-Omni / Gemini)과 프레임 검증 방법 | 도은 |
 | 필터링 합격 기준과 suggestion 생성 방법 | 윤석 |
 | SAM Audio 실측(GPU 메모리, 10초 처리 시간, torch 버전 호환성) | 광웅, separation real 작업 시 |
 | 팀원의 SAM Audio 공식 승인 또는 미러 사용 | 팀 |
+
+### GPU 런타임 호환성 해결 (2026-11-10)
+
+Codex의 정적 리뷰가 찾은 차단 3건을 다음처럼 해결했다(Claude).
+
+- `huggingface-hub` 2.4는 SAM Audio 로더가 쓰는 `proxies`, `resume_download`를 없앴다.
+  `gpu/`에 `huggingface-hub<1.0`을 직접 선언했다(우리 환경의 버전 선택이며, 남의 선언 제약을
+  덮어쓴 것이 아니다). 그 결과 transformers 4.57.6, hub 0.36.2로 풀린다.
+- PyPI의 torchcodec는 CUDA 13용이라 cu128 torch와 함께 로드되지 않는다. torchcodec를 cu128
+  인덱스에서 받고, 링크에 필요한 `nvidia-npp-cu12`를 추가한 뒤 이미지에서 `LD_LIBRARY_PATH`로 연다.
+- small 모델 58억 파라미터 중 ranker·span predictor가 약 44억이라 fp32로 24GB GPU를 넘는다.
+  재순위 후보 1개, 구간 예측 끔(기본값)일 때는 SAM Audio가 이 모듈들을 호출하지 않고 None/부재를
+  공식 처리하므로, 어댑터가 GPU로 옮기기 전에 뺀다.
+
+### SAM Audio 실측 (2026-11-10)
+
+dnn5, RTX A5000 24GB, 드라이버 580.178.04, `facebook/sam-audio-small` + `facebook/sam-audio-judge`,
+`samples/sample.mp4`(7.1초), `HF_HUB_OFFLINE=1`.
+
+| 항목 | 결과 |
+|---|---|
+| 분리 모델 로딩 / 1회 분리 | 95초 / 6.5초 |
+| Judge 로딩 / 1회 판정 | 23초 / 3.6초 |
+| 최대 GPU 메모리 (분리+Judge 한 프로세스) | 13.4GB |
+| 도구별 GPU 메모리 (도구 서버 각각) | 분리 8.9GB, Judge 8.2GB |
+| torch / CUDA 런타임 | 2.11.0+cu128 / 12.8 |
+| Judge 점수 | overall 약 1.0~1.85, precision 약 4.5 (범위가 1~5로 보임) |
+| judge_pass_threshold | 0.5 (미보정, 이 범위에서는 모두 통과) |
+| E2E (도구 서버 2개 remote + main, stub 플래너) | ready, 소스 3개 모두 1회에 통과, render 200 |
+| main 이미지 | 881MB |
+| sam-audio 이미지 | 14.3GB |
+| compose E2E (dnn5: main + 분리 GPU0 + Judge GPU1 컨테이너) | ready, 소스 3개 모두 통과, render 200, stems 4개 |
+
+sv3-a100의 `mrfakename/sam-audio-large-tv` 실측은 GPU를 다른 작업이 쓰고 있어 하지 않았다.
+
+이미지 빌드에서 확인한 것:
+- 큰 git 의존성(sam-audio, perception_models, pytorchvideo) 중 하나가 새로 받는 도중 자주 끊긴다(sv3·dnn5 모두).
+  Dockerfile이 uv 캐시 마운트를 두고 `uv sync`를 최대 5회 재시도한다.
+- Judge는 실행 중 triton으로 GPU 커널을 컴파일하므로 이미지에 `gcc`, `libc6-dev`가 필요하다.
+- sv3-a100의 기본 Docker 빌드 엔진은 `/home/common/docker/buildkit/...` 경로 문제로 빌드가 실패한다(서버 설정).
 
 ## 14. 다음 단계 (승인 후)
 

@@ -29,7 +29,7 @@ class RemoteTests(unittest.TestCase):
         for tool in ['separation', 'filtering']:
             listener = socket.socket()
             listener.bind(('127.0.0.1', 0))
-            server = uvicorn.Server(uvicorn.Config(create_tool_app(tool, 'stub', 't'), log_level='error', ws='none'))
+            server = uvicorn.Server(uvicorn.Config(create_tool_app([tool], 'stub', 't'), log_level='error', ws='none'))
             thread = threading.Thread(target=server.run, kwargs={'sockets': [listener]}, daemon=True)
             thread.start()
             cls.servers.append((server, thread, listener))

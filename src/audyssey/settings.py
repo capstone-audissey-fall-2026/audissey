@@ -24,3 +24,7 @@ class Settings(BaseSettings):
     work_dir: Path = Path("work/jobs")
     sam_audio_model: str = "facebook/sam-audio-large-tv"
     sam_audio_judge_model: str = "facebook/sam-audio-judge"
+    sam_audio_device: str = "cuda"
+    sam_audio_reranking_candidates: int = Field(default=1, ge=1)
+    sam_audio_predict_spans: bool = False
+    judge_pass_threshold: float = 0.5
