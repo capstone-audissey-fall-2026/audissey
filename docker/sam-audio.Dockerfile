@@ -21,4 +21,4 @@ ENV PATH="/app/gpu/.venv/bin:$PATH" HF_HOME=/hf HF_HUB_OFFLINE=1 CUDA_VISIBLE_DE
 # torchcodec cu128 needs NVIDIA NPP from the nvidia-npp-cu12 wheel at load time.
 ENV LD_LIBRARY_PATH="/app/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:$LD_LIBRARY_PATH"
 EXPOSE 8700
-CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
+CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--tool", "grounding", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
