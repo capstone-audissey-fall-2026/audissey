@@ -1,6 +1,5 @@
 import json
-from dataclasses import dataclass
-from typing_extensions import TypedDict
+from dataclasses import dataclass, field
 
 from langgraph.graph import END, START, StateGraph
 
@@ -157,10 +156,11 @@ def process_source(job: Job, source: Source, ctx: Context) -> None:
     ctx.store.save(job)
 
 
-class AnalysisState(TypedDict):
+@dataclass
+class AnalysisState:
     job: Job
-    issues: list[PlanIssue]
-    round: int
+    issues: list[PlanIssue] = field(default_factory=list)
+    round: int = 0
 
 
 def refresh_residual(job: Job, ctx: Context) -> None:
@@ -199,7 +199,7 @@ def analyze(job: Job, ctx: Context) -> Job:
     def plan(state: AnalysisState) -> dict:
         nonlocal active_key
         active_key = "plan"
-        round_number = state["round"] + 1
+        round_number = state.round + 1
         update_step(
             job,
             ctx,
@@ -215,7 +215,7 @@ def analyze(job: Job, ctx: Context) -> Job:
                 directory / job.video_path,
                 directory / job.audio_path,
                 job.duration,
-                state["issues"],
+                state.issues,
             ),
             job.duration,
         )
@@ -250,11 +250,11 @@ def analyze(job: Job, ctx: Context) -> Job:
             StepStatus(
                 key=active_key,
                 status="running",
-                round=state["round"],
+                round=state.round,
                 max_rounds=ctx.settings.max_plan_rounds,
             ),
         )
-        issues = state["issues"] or ctx.tools.validate_plan(
+        issues = state.issues or ctx.tools.validate_plan(
             directory / job.video_path,
             directory / job.audio_path,
             [s.plan for s in job.sources],
@@ -266,19 +266,19 @@ def analyze(job: Job, ctx: Context) -> Job:
             StepStatus(
                 key=active_key,
                 status="warning" if issues else "done",
-                round=state["round"],
+                round=state.round,
                 max_rounds=ctx.settings.max_plan_rounds,
                 message="; ".join(i.message for i in issues),
             ),
         )
-        if issues and state["round"] >= ctx.settings.max_plan_rounds:
+        if issues and state.round >= ctx.settings.max_plan_rounds:
             update_step(
                 job,
                 ctx,
                 StepStatus(
                     key="plan",
                     status="warning",
-                    round=state["round"],
+                    round=state.round,
                     max_rounds=ctx.settings.max_plan_rounds,
                     message="; ".join(i.message for i in issues),
                 ),
@@ -299,8 +299,7 @@ def analyze(job: Job, ctx: Context) -> Job:
         refresh_residual(job, ctx)
         return {}
 
-    # ty cannot match LangGraph's TypedDictLike protocol to a concrete TypedDict.
-    builder = StateGraph(AnalysisState)  # ty: ignore[invalid-argument-type]
+    builder = StateGraph(AnalysisState)
     for name, node in [
         ("preprocess", preprocess),
         ("plan", plan),
@@ -316,7 +315,7 @@ def analyze(job: Job, ctx: Context) -> Job:
         "validate",
         lambda state: (
             "plan"
-            if state["issues"] and state["round"] < ctx.settings.max_plan_rounds
+            if state.issues and state.round < ctx.settings.max_plan_rounds
             else "separate"
         ),
         ["plan", "separate"],
@@ -325,7 +324,7 @@ def analyze(job: Job, ctx: Context) -> Job:
     builder.add_edge("residual", END)
     try:
         builder.compile().invoke(
-            {"job": job, "issues": [], "round": 0},
+            AnalysisState(job=job),
             {"recursion_limit": 2 * ctx.settings.max_plan_rounds + 10},
         )
         job.state = "ready"
