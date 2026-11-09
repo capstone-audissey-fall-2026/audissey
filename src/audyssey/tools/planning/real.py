@@ -99,8 +99,13 @@ def _request(
                 )
             raw = response.choices[0].message.content if response.choices else None
             try:
-                return response_type.model_validate_json(raw or "")
-            except ValidationError:
+                data = json.loads(raw or "")
+                if isinstance(data, list):
+                    # Gemini sometimes drops the {"sources": [...]} wrapper.
+                    (field,) = response_type.model_fields
+                    data = {field: data}
+                return response_type.model_validate(data)
+            except (json.JSONDecodeError, ValidationError):
                 if attempt == 0:
                     messages.append(
                         {

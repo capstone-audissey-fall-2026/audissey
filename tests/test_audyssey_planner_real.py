@@ -64,6 +64,20 @@ class PlannerRealTests(unittest.TestCase):
         self.responses.append(json.dumps({"sources": sources}))
         return real.plan(self.video, self.audio, 2, feedback or [])
 
+    def test_plan_accepts_bare_source_list(self):
+        # Gemini sometimes returns the list without the {"sources": ...} wrapper.
+        self.responses.append(json.dumps([self.source()]))
+        result = real.plan(self.video, self.audio, 2, [])
+        self.assertEqual([p.name for p in result], ["person"])
+        self.assertEqual(len(self.requests), 1)
+
+    def test_validate_accepts_bare_issue_list(self):
+        self.responses.append(json.dumps([
+            {"source_name": "person", "kind": "mismatch", "message": "not visible"},
+        ]))
+        issues = real.validate_plan(self.video, self.audio, [SourcePlan(**self.source())])
+        self.assertEqual([i.message for i in issues], ["not visible"])
+
     def test_plan_parses_sources_and_clamps(self):
         result = self.plan([self.source(
             spans=[{"start": -1, "end": 5}, {"start": 3, "end": 4}, {"start": 1, "end": 0}],
@@ -84,13 +98,18 @@ class PlannerRealTests(unittest.TestCase):
         self.assertEqual(self.plan([self.source()])[0].name, "person")
         self.assertEqual(len(self.requests), 2)
         self.requests.clear()
-        for bad in ["x" * 600, '{}', '{"sources": null}', '[]', None]:
+        for bad in ["x" * 600, '{}', '{"sources": null}', None]:
             with self.subTest(bad=bad):
                 self.responses = [bad, bad]
                 with self.assertRaisesRegex(RuntimeError, "planner returned invalid JSON") as caught:
                     real.plan(self.video, self.audio, 2, [])
                 self.assertLessEqual(len(str(caught.exception)), 532)
-        self.assertEqual(len(self.requests), 10)
+        self.assertEqual(len(self.requests), 8)
+        # A bare empty list is a valid but empty source list, like {"sources": []}.
+        self.responses = ['[]']
+        with self.assertRaisesRegex(RuntimeError, "no valid sources"):
+            real.plan(self.video, self.audio, 2, [])
+        self.assertEqual(len(self.requests), 9)
 
     def test_plan_drops_invalid_items_and_errors_when_none_left(self):
         invalid = [None, 3, {}, self.source(kind="unknown"), self.source(spans="bad"), self.source(spans=[{"start": float("nan"), "end": 1}])]
