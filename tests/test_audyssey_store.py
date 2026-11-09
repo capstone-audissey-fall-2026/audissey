@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +26,8 @@ class StoreTests(unittest.TestCase):
     def test_list_newest_first(self):
         a, _ = self.store.create("a.mp4", b"a")
         b, _ = self.store.create("b.mp4", b"b")
+        os.utime(self.store.dir(a.id) / "job.json", ns=(1000000000, 1000000000))
+        os.utime(self.store.dir(b.id) / "job.json", ns=(2000000000, 2000000000))
         self.assertEqual([j.id for j in self.store.list()], [b.id, a.id])
         self.store.save(a)
         self.assertEqual(self.store.list()[0].id, a.id)
