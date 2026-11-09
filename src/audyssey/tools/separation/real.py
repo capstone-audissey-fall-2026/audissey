@@ -49,6 +49,7 @@ def separate(
             descriptions=[plan.description],
             audios=[torch.from_numpy(audio.T)],
             anchors=anchors,
+            **({"masked_videos": [str(video)]} if plan.visual_hint is not None else {}),
         ).to(settings.sam_audio_device)
         with torch.inference_mode():
             torch.manual_seed(attempt)

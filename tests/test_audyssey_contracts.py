@@ -58,3 +58,12 @@ class ContractsTests(unittest.TestCase):
         job = Job(id="a", video_path="input.mp4", sources=[source])
         self.assertEqual(job.find_source("s1"), source)
         self.assertIsNone(job.find_source("s99"))
+
+    def test_ground_result_roundtrip_and_bounds(self):
+        from audyssey.contracts import GroundResult
+        result = GroundResult(found=True, box=(0, 0.2, 1, 0.8), score=0.9)
+        self.assertEqual(GroundResult.model_validate_json(result.model_dump_json()), result)
+        self.assertIsNone(GroundResult(found=False).box)
+        for box in [(-0.1, 0, 1, 1), (0.8, 0, 0.2, 1)]:
+            with self.assertRaises(ValidationError):
+                GroundResult(found=True, box=box)

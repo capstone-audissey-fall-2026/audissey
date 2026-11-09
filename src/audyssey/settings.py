@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     planner: Literal["stub", "real"] = "stub"
     separator: Literal["stub", "real", "remote"] = "stub"
     filter: Literal["stub", "real", "remote"] = "stub"
+    grounder: Literal["stub", "real", "remote"] = "stub"
+    grounding_url: str = ""
+    sam3_model: str = "facebook/sam3.1"
+    sam3_device: str = "cuda"
+    # SAM3 keeps per-frame tracking state on the GPU; 1080p60 at 4 fps already needs >24 GB.
+    # 0 tracks at the source frame rate.
+    sam3_track_fps: float = Field(default=2, ge=0)
     separator_url: str = ""
     filter_url: str = ""
     tool_token: str = Field(default="", repr=False)

@@ -106,3 +106,11 @@ class SamSeparationTests(unittest.TestCase):
         with patch.dict(sys.modules, torch=None, sam_audio=None):
             with self.assertRaisesRegex(RuntimeError, 'SAM Audio is not installed: install the gpu/ environment'):
                 self.separate()
+
+    def test_real_separate_passes_masked_video_only_with_hint(self):
+        from audyssey.contracts import VisualHint
+        self.separate()
+        self.assertNotIn('masked_videos', self.processor.call_args.kwargs)
+        self.plan.visual_hint = VisualHint(time=0, box=(0, 0, .5, 1), description='a')
+        self.separate()
+        self.assertEqual(self.processor.call_args.kwargs['masked_videos'], ['unused.mp4'])

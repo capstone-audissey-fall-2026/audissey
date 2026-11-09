@@ -30,6 +30,20 @@ class VisualHint(Model):
         return self
 
 
+class GroundResult(Model):
+    found: bool
+    box: tuple[float, float, float, float] | None = None
+    score: float | None = None
+
+    @model_validator(mode="after")
+    def check_box(self) -> Self:
+        if self.box is not None:
+            x0, y0, x1, y1 = self.box
+            if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                raise ValueError("box must be ordered and normalized to 0..1")
+        return self
+
+
 SourceKind = Literal["dialogue", "sfx", "music", "ambience"]
 
 

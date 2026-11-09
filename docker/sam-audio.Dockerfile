@@ -17,8 +17,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       uv sync --project gpu --locked --no-dev --python 3.12 && exit 0; \
       echo "uv sync attempt $i failed, retrying"; sleep 10; \
     done; exit 1
-ENV PATH="/app/gpu/.venv/bin:$PATH" HF_HOME=/hf HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0
+ENV PATH="/app/gpu/.venv/bin:$PATH" HF_HOME=/hf HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # torchcodec cu128 needs NVIDIA NPP from the nvidia-npp-cu12 wheel at load time.
 ENV LD_LIBRARY_PATH="/app/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:$LD_LIBRARY_PATH"
 EXPOSE 8700
-CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
+CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--tool", "grounding", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]

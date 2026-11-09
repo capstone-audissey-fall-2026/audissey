@@ -52,3 +52,12 @@ class CliTests(unittest.TestCase):
     def test_tool_server_rejects_unknown_tool(self):
         result = CliRunner().invoke(app, ['tool-server', '--tool', 'unknown'])
         self.assertEqual(result.exit_code, 2)
+
+    def test_tool_server_accepts_grounding(self):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        with patch('audyssey.cli.uvicorn.run') as run:
+            result = CliRunner().invoke(app, ['tool-server', '--tool', 'grounding'])
+        self.assertEqual(result.exit_code, 0, result.output)
+        with TestClient(run.call_args.args[0]) as client:
+            self.assertEqual(client.get('/health').json()['tools'], ['grounding'])
