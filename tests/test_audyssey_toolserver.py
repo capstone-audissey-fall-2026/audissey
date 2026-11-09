@@ -25,12 +25,12 @@ class ToolServerTests(unittest.TestCase):
         self.data = {'plan': self.plan.model_dump_json(), 'attempt': '1'}
 
     def client(self, tool='separation', token=''):
-        client = TestClient(create_tool_app(tool, 'stub', token))
+        client = TestClient(create_tool_app([tool], 'stub', token))
         self.addCleanup(client.close)
         return client
 
     def test_health(self):
-        self.assertEqual(self.client(token='t').get('/health').json(), {'tool': 'separation', 'impl': 'stub'})
+        self.assertEqual(self.client(token='t').get('/health').json(), {'tools': ['separation'], 'impl': 'stub'})
 
     def test_separate_stub_matches_direct_call(self):
         response = self.client().post('/separate', files=self.files, data=self.data)
@@ -71,3 +71,14 @@ class ToolServerTests(unittest.TestCase):
             return separate(mono, plan, video, out, attempt)
         with patch('audyssey.tools.separation.stub.separate', inspect):
             self.assertEqual(self.client().post('/separate', files=self.files, data=self.data).status_code, 200)
+
+    def test_multi_tool_app_serves_both(self):
+        with TestClient(create_tool_app(['separation', 'filtering'], 'stub', 't')) as client:
+            self.assertEqual(client.get('/health').json(), {'tools': ['separation', 'filtering'], 'impl': 'stub'})
+            headers = {'Authorization': 'Bearer t'}
+            response = client.post('/separate', files=self.files, data=self.data, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            response = client.post('/judge', files={'mono': self.files['mono'], 'track': self.files['mono']}, data={'plan': self.plan.model_dump_json()}, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertFalse(FilterResult.model_validate(response.json()).passed)
+            self.assertEqual(client.post('/judge').status_code, 401)

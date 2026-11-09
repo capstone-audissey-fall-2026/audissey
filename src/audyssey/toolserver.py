@@ -16,11 +16,10 @@ _model_lock = Lock()
 
 
 def create_tool_app(
-    tool: Literal["separation", "filtering"],
+    tools: list[Literal["separation", "filtering"]],
     impl: Literal["stub", "real"],
     token: str,
 ) -> FastAPI:
-    module = import_module(f"audyssey.tools.{tool}.{impl}")
     app = FastAPI()
 
     @app.middleware("http")
@@ -32,8 +31,8 @@ def create_tool_app(
         return await call_next(request)
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"tool": tool, "impl": impl}
+    def health() -> dict[str, str | list[Literal["separation", "filtering"]]]:
+        return {"tools": tools, "impl": impl}
 
     def parse_plan(raw: str) -> SourcePlan:
         try:
@@ -41,7 +40,8 @@ def create_tool_app(
         except ValidationError:
             raise HTTPException(422, "invalid source plan") from None
 
-    if tool == "separation":
+    if "separation" in tools:
+        separation = import_module(f"audyssey.tools.separation.{impl}")
 
         @app.post("/separate")
         def separate(
@@ -57,12 +57,13 @@ def create_tool_app(
                 mono_path.write_bytes(mono.file.read())
                 video_path.write_bytes(video.file.read())
                 with _model_lock:
-                    out = module.separate(
+                    out = separation.separate(
                         mono_path, source_plan, video_path, root / "track.wav", attempt
                     )
                 return Response(out.read_bytes(), media_type="audio/wav")
 
-    else:
+    if "filtering" in tools:
+        filtering = import_module(f"audyssey.tools.filtering.{impl}")
 
         @app.post("/judge")
         def judge(
@@ -75,6 +76,6 @@ def create_tool_app(
                 mono_path.write_bytes(mono.file.read())
                 track_path.write_bytes(track.file.read())
                 with _model_lock:
-                    return module.judge(mono_path, track_path, source_plan)
+                    return filtering.judge(mono_path, track_path, source_plan)
 
     return app
