@@ -1,0 +1,25 @@
+[project]
+name = "audyssey-gpu"
+version = "0.1.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "audyssey[ui]",
+    "torch",
+    "torchaudio",
+    "torchvision",
+    "sam-audio @ git+https://github.com/facebookresearch/sam-audio@bb4c6999d2677c7402360e426afc01ddfad6dce0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+audyssey = { path = "..", editable = true }
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
