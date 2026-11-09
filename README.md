@@ -50,6 +50,17 @@ uv run ty check --error-on-warning src/
 [설계](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md) · [구현 계획](docs/superpowers/plans/2026-11-09-audyssey-skeleton.md)
 
 
+## GPU 실행 차단 사항
+
+현재 `gpu/uv.lock`은 의존성 해결·설치에는 성공했지만 real 모델을 실행할 준비가
+완료된 상태는 아닙니다. 정적 리뷰에서 `huggingface-hub==2.4.0`의
+`ModelHubMixin.from_pretrained`가 고정 SAM Audio의 `_from_pretrained`에 필요한
+`proxies`, `resume_download`를 전달하지 않는 API 불일치를 확인했습니다.
+SAM Audio 내부 Judge ranker도 같은 로더를 사용하므로 직접 호출 두 곳만 바꾸는
+것으로는 해결이 보장되지 않습니다. 외부 제약 강제 핀, monkeypatch, ranker 비활성화는
+하지 않았습니다. 이 호환성 문제를 해결하기 전에는 아래 GPU 배포 절차를 완료된
+실행 가이드로 간주하지 마세요. GPU·Docker 실행 자체도 sandbox로 검증 대기입니다.
+
 ## 한 GPU 서버에서 전부 띄우기 (sv3-a100 등 Docker 되는 서버)
 
 NVIDIA Container Toolkit과 Docker Compose가 설치된 서버에서 실행합니다.

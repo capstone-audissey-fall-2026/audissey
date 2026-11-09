@@ -29,3 +29,10 @@ was verified; GPU imports, timing, VRAM and Docker image sizes remain **pending
 measurement** because the sandbox launcher refused execution. Do not interpret a
 successful installation or `/health` response as verified model inference.
 See the [team deployment guide](../README.md) for compose and RunPod settings.
+
+**Runtime blocker from static review:** the resolved `huggingface-hub==2.4.0`
+`ModelHubMixin.from_pretrained` does not pass `proxies` or `resume_download`, both
+required by the pinned SAM Audio `BaseModel._from_pretrained`. Its nested Judge
+ranker uses the same loader. Resolution and installation therefore do not prove a
+usable model runtime. No dependency override, forced pin, upstream monkeypatch,
+or disabled ranker was used. GPU execution is independently sandbox-blocked.

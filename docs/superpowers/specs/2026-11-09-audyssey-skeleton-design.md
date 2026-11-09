@@ -354,6 +354,21 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 | SAM Audio 실측(GPU 메모리, 10초 처리 시간, torch 버전 호환성) | 광웅, separation real 작업 시 |
 | 팀원의 SAM Audio 공식 승인 또는 미러 사용 | 팀 |
 
+### GPU 런타임 호환성 차단 (2026-11-10 정적 리뷰)
+
+`gpu/` lock·설치 성공 후 고정 upstream과 실제 설치 소스를 대조해 API 불일치를
+확인했다. `huggingface-hub==2.4.0`의 `ModelHubMixin.from_pretrained`는
+`proxies`, `resume_download`를 전달하지 않지만, 고정 SAM Audio
+`sam_audio/model/base.py`의 `_from_pretrained`는 두 값을 필수로 받는다.
+또한 upstream의 `snapshot_download` 호출도 현재 Hub에서 제거된 두 인자를 쓴다.
+분리 모델 내부 `JudgeRanker`도 같은 로더를 직접 부르므로 단순한 외부 호출 수정으로
+전체 경로가 해결된다고 보장할 수 없다. 실제 GPU 호출로 관찰한 오류는 아니며,
+설치된 소스의 서명과 호출을 비교한 확정적 API 불일치다.
+
+외부 의존성 강제 핀·제약 덮어쓰기·monkeypatch·ranker 비활성화 없이 해결할 작고
+검증된 변경을 찾지 못했다. 사용자 지시대로 push·PR 생성 전에 중단한다.
+따라서 real 어댑터·이미지 정의는 구현되었으나 real 실행은 아직 준비 완료가 아니다.
+
 ### SAM Audio 실측 (2026-11-10)
 
 **pending measurement** — GPU·Docker 명령이 sandbox 실행 단계에서
