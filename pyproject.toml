@@ -3,47 +3,31 @@ requires = ["uv_build>=0.9.18,<0.10.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["v2a_inspect", "audyssey"]
+module-name = "audyssey"
 module-root = "src"
 
 [tool.uv-build]
 include = [
-    "src/v2a_inspect/prompts/files/**/*.txt",
-    "src/v2a_inspect/ui/*.html",
     "src/audyssey/devui/*.html",
 ]
 
 [project]
-name = "v2a-inspect"
+name = "audyssey"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11,<=3.14"
 dependencies = [
-    "python-dotenv>=1.0.0",
-    "langchain>=1.2.12",
-    "langchain-google-genai>=4.0.0",
-    "langchain-openai>=1.1.14",
     "langgraph>=1.1.2",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
     "httpx>=0.27.0",
-    "scenedetect>=0.7",
-    "av>=17.0.1",
-    "pillow>=11.3.0",
-    "pycocotools>=2.0.11",
-    "moviepy>=2.2.1",
-    "openai>=2.29.0",
-    "elevenlabs>=2.51.0",
     "scipy>=1.17.1",
     "numpy>=2.4.3",
     "typer>=0.20.0",
 ]
 
 [project.optional-dependencies]
-observability = [
-    "langfuse>=3.9.0",
-]
 ui = [
     "fastapi>=0.136.1",
     "python-multipart>=0.0.28",
@@ -52,12 +36,9 @@ ui = [
 
 [project.scripts]
 audyssey = "audyssey.cli:main"
-v2a = "v2a_inspect.cli:main"
 
 [dependency-groups]
 dev = [
-    "ipywidgets>=8.1.8",
-    "jupyter>=1.1.1",
     "pre-commit>=4.5.1",
     "ruff>=0.15.6",
     "ty>=0.0.26",

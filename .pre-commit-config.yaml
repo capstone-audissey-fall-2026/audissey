@@ -9,11 +9,11 @@ repos:
   rev: v0.14.11
   hooks:
     - id: ruff-check
-      args: ["src/", "server/src/", "--fix"]
+      args: ["src/", "--fix"]
       pass_filenames: false
       types_or: [ python, pyi ]
     - id: ruff-format
-      args: ["src/", "server/src/"]
+      args: ["src/"]
       pass_filenames: false
       types_or: [ python, pyi ]
 
