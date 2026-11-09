@@ -6,7 +6,13 @@ from pathlib import Path
 
 from langsmith import traceable
 
-from audyssey.contracts import FilterResult, PlanIssue, SourcePlan
+from audyssey.contracts import (
+    FilterResult,
+    GroundResult,
+    PlanIssue,
+    SourcePlan,
+    VisualHint,
+)
 from audyssey.settings import Settings
 
 
@@ -16,18 +22,22 @@ class Tools:
     validate_plan: Callable[[Path, Path, list[SourcePlan]], list[PlanIssue]]
     separate: Callable[[Path, SourcePlan, Path, Path, int], Path]
     judge: Callable[[Path, Path, SourcePlan], FilterResult]
+    locate: Callable[[Path, VisualHint], GroundResult]
+    mask_video: Callable[[Path, VisualHint, Path], Path]
 
 
 def load_tools(settings: Settings) -> Tools:
     for mode, url, name in [
         (settings.separator, settings.separator_url, "SEPARATOR"),
         (settings.filter, settings.filter_url, "FILTER"),
+        (settings.grounder, settings.grounding_url, "GROUNDING"),
     ]:
         if mode == "remote" and not url.strip():
             raise ValueError(f"AUDYSSEY_{name}_URL is required for remote mode")
     planning = import_module(f"audyssey.tools.planning.{settings.planner}")
     separation = import_module(f"audyssey.tools.separation.{settings.separator}")
     filtering = import_module(f"audyssey.tools.filtering.{settings.filter}")
+    grounding = import_module(f"audyssey.tools.grounding.{settings.grounder}")
     return Tools(
         wraps(planning.plan)(traceable(run_type="tool", name="plan")(planning.plan)),
         wraps(planning.validate_plan)(
@@ -38,5 +48,11 @@ def load_tools(settings: Settings) -> Tools:
         ),
         wraps(filtering.judge)(
             traceable(run_type="tool", name="judge")(filtering.judge)
+        ),
+        wraps(grounding.locate)(
+            traceable(run_type="tool", name="locate")(grounding.locate)
+        ),
+        wraps(grounding.mask_video)(
+            traceable(run_type="tool", name="mask_video")(grounding.mask_video)
         ),
     )
