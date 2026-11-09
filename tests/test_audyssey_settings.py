@@ -69,3 +69,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.judge_pass_threshold, 0.7)
         with self.assertRaises(ValidationError):
             Settings(sam_audio_reranking_candidates=0)
+
+    def test_grounding_defaults_and_environment(self):
+        defaults = Settings()
+        self.assertEqual((defaults.grounder, defaults.grounding_url, defaults.sam3_model, defaults.sam3_device),
+                         ('stub', '', 'facebook/sam3.1', 'cuda'))
+        with patch.dict(os.environ, AUDYSSEY_GROUNDER='remote', AUDYSSEY_GROUNDING_URL='http://grounding:8700', AUDYSSEY_SAM3_DEVICE='cpu', AUDYSSEY_SAM3_MODEL='local/model'):
+            settings = Settings()
+        self.assertEqual((settings.grounder, settings.grounding_url, settings.sam3_device, settings.sam3_model),
+                         ('remote', 'http://grounding:8700', 'cpu', 'local/model'))
+        with self.assertRaises(ValidationError):
+            Settings(grounder='unknown')

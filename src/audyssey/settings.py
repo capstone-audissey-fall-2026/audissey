@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     planner: Literal["stub", "real"] = "stub"
     separator: Literal["stub", "real", "remote"] = "stub"
     filter: Literal["stub", "real", "remote"] = "stub"
+    grounder: Literal["stub", "real", "remote"] = "stub"
+    grounding_url: str = ""
+    sam3_model: str = "facebook/sam3.1"
+    sam3_device: str = "cuda"
     separator_url: str = ""
     filter_url: str = ""
     tool_token: str = Field(default="", repr=False)
