@@ -160,3 +160,8 @@ class ApiTests(unittest.TestCase):
             before = self.client.get(f"/api/jobs/{job['id']}").json()
             self.assertEqual(self.command(job["id"], data).status_code, status)
             self.assertEqual(self.client.get(f"/api/jobs/{job['id']}").json(), before)
+
+    def test_root_serves_dev_ui(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Audyssey dev UI", response.text)

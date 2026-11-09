@@ -1,10 +1,11 @@
 import asyncio
+from importlib.resources import files
 from tempfile import TemporaryDirectory
 from threading import Lock, Thread
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from audyssey.contracts import AddSource, Job, Render, Reseparate, parse_command
 from audyssey.graph import Context, analyze, handle_command
@@ -113,7 +114,7 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
             raise HTTPException(404, "file not found") from exc
 
     @app.get("/")
-    def root():
-        raise HTTPException(404, "dev UI not found")
+    def root() -> HTMLResponse:
+        return HTMLResponse((files("audyssey.devui") / "index.html").read_text())
 
     return app
