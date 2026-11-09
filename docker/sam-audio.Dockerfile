@@ -1,6 +1,7 @@
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /usr/local/bin/uv
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg git \
+# gcc/libc6-dev: triton compiles GPU kernels at runtime (SAM Audio Judge).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg git gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
 RUN uv python install 3.12
