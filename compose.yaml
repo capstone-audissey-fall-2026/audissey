@@ -61,7 +61,7 @@ services:
               capabilities: [gpu]
 
   vllm:
-    image: vllm/vllm-openai:v0.11.0
+    image: vllm/vllm-openai:v0.32.0
     command:
       - --model
       - ${AUDYSSEY_VLLM_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}

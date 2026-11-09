@@ -78,8 +78,8 @@ main, separation, judge, vllm 네 컨테이너가 실행됩니다. main만 `127.
 메모리 사용 비율은 0.85입니다. 다른 GPU 도구와 함께 실행할 때는
 `AUDYSSEY_VLLM_GPU`와 메모리 여유를 조정합니다.
 
-vLLM 이미지는 [공식 v0.11.0 릴리스](https://github.com/vllm-project/vllm/releases/tag/v0.11.0)로
-고정했습니다. [해당 버전의 지원 모델](https://docs.vllm.ai/en/v0.11.0/models/supported_models.html)에
+vLLM 이미지는 [공식 v0.32.0 릴리스](https://github.com/vllm-project/vllm/releases/tag/v0.32.0)로
+고정했습니다. [해당 버전의 지원 모델](https://docs.vllm.ai/en/v0.32.0/models/supported_models.html)에
 Qwen2.5-VL-3B가 있습니다. 이미지 pull과 GPU 실행은 운영자 확인이 필요합니다.
 Gemini 키를 `.env`의 `GOOGLE_API_KEY`로 준비한 경우 다음 두 줄로 전환합니다.
 `AUDYSSEY_PLANNER_API_KEY`를 따로 설정하면 그 값이 우선합니다.
