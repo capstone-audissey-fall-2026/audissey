@@ -68,7 +68,7 @@ NVIDIA Container Toolkit과 Docker Compose가 설치된 서버에서 실행합�
 ```bash
 cp .env.example .env
 # .env의 AUDYSSEY_TOOL_TOKEN을 임의의 긴 토큰으로 교체
-# sv3-a100: HF_CACHE=/home/common/huggingface, AUDYSSEY_GPU=0 유지
+# sv3-a100: HF_CACHE=/home/common/huggingface, AUDYSSEY_SEPARATION_GPU·AUDYSSEY_JUDGE_GPU로 GPU 지정
 docker compose up
 # http://localhost:8600 에서 samples/sample.mp4 업로드
 ```

@@ -32,7 +32,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${AUDYSSEY_GPU:-0}"]
+              device_ids: ["${AUDYSSEY_SEPARATION_GPU:-0}"]
               capabilities: [gpu]
 
   judge:
@@ -53,7 +53,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${AUDYSSEY_GPU:-0}"]
+              device_ids: ["${AUDYSSEY_JUDGE_GPU:-0}"]
               capabilities: [gpu]
 
 volumes:
