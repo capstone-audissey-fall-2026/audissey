@@ -2,7 +2,7 @@
 
 - 날짜: 2026-11-09
 - 작성: 광웅(gwpark0741), Claude와 논의
-- 상태: **최종안, 승인 대기**. 승인 전에는 구현하지 않는다.
+- 상태: **구현 승인됨**. 2026-11-09 skeleton 구현 요청으로 승인.
 - 출처: "Agentic Audio Studio — 시스템 구현 명세서 (Draft v0.1)", 팀 모듈 역할 초안(§4), 2026-11-09 논의
 
 **표기**: 논의에서 합의한 결정은 표시하지 않는다. Claude가 정한 결정은 **(제안)**으로 표시한다. 바꾸고 싶으면 그 줄만 고치면 된다. 결정 전체 목록은 §12에 있다.
@@ -147,7 +147,7 @@
 모든 모듈이 공유하는 계약은 `src/audyssey/contracts.py` 한 파일에 Pydantic 모델로 둔다. 도구 담당자는 이 파일을 바꾸지 않고 구현만 바꾼다. 계약을 바꾸려면 PR로 팀 합의를 거친다.
 
 **공통 규칙**
-- 오디오는 파일 경로로 주고받는다.
+- 오디오는 파일 경로로 주고받는다. Job의 모든 경로는 job 폴더 기준 상대 경로다.
 - 시간은 초 단위 float다.
 - **(제안)** 중간 오디오 파일은 float32 wav로 저장한다.
 
@@ -180,6 +180,7 @@ Job          { id: str, video_path: str, duration: float,
                plan_issues: list[PlanIssue],
                steps: list[StepStatus],
                outputs: RenderOutput | None,
+               state: "running" | "ready" | "failed", version: int,
                error: str | None }
 RenderOutput { mix_wav: str, video_mp4: str, stems: list[str] }
 Command      = Keep | Drop | SetGain | SetPitch | Reseparate | AddSource | Render   # §7.2
@@ -195,18 +196,19 @@ plan(video_path, audio_path, duration, feedback: list[PlanIssue]) -> list[Source
 validate_plan(video_path, audio_path, plans: list[SourcePlan]) -> list[PlanIssue]     # 빈 목록 = 통과
 separate(mono_path, plan: SourcePlan, video_path, out_path, attempt: int) -> out_path
 judge(mono_path, track_path, plan: SourcePlan) -> FilterResult
-render(job: Job, out_dir, include_residual_stem: bool) -> RenderOutput
+render(job: Job, job_dir, include_residual_stem: bool) -> RenderOutput
 ```
 
 **stub 동작 (제안)**: stub도 진짜와 같은 형식의 결과를 돌려준다. 그리고 검증 루프가 실제로 한 번씩 돌게 만든다.
-- `plan`: 고정 소스 2~3개를 돌려준다. 이름, 구간, 텍스트가 다 채워져 있다.
-- `validate_plan`: 첫 회차에는 문제 1개를 돌려주고, 두 번째 회차부터 통과시킨다.
+- `plan`: 첫 계획은 ghost_sound 포함 4개, 피드백 후 3개의 고정 소스를 돌려준다. 이름, 구간, 텍스트가 다 채워져 있다.
+- `validate_plan`: ghost_로 시작하는 소스를 문제로 보고한다. plan은 피드백에서 지목한 소스를 제거하므로 기본 설정에서 두 번째 회차에 통과한다.
 - `separate`: 모노 원본에서 해당 구간만 남기고 나머지를 0으로 채운다. 원본과 길이가 같다.
-- `judge`: 첫 번째 소스의 첫 시도만 불합격(suggestion 포함)이고, 나머지는 합격이다.
+- `judge`: character_a의 설명이 " (refined)"로 끝나지 않으면 불합격이며 그 접미사를 붙인 suggestion을 돌려준다. 그 밖에는 합격이다.
 - `render`: stub이 없다. 처음부터 진짜 DSP로 만든다.
 
 **render 출력 (제안)**
 - `mix_wav`와 `video_mp4`: keep된 소스(gain, pitch 적용)와 keep된 나머지(gain 적용)를 합친 결과다.
+- 출력은 `job_dir/out/`에 저장한다.
 - `stems`: keep된 소스만 편집값을 적용해 각각 wav로 내보낸다. `include_residual_stem=True`면 나머지도 포함한다.
 - 편집 전 원본 분리 트랙은 항상 작업 폴더에 남는다.
 - pitch 변경은 길이를 유지해야 한다. 타임라인 정렬이 깨지면 안 되기 때문이다.
@@ -247,7 +249,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - 트랙 목록(재생, keep/drop, 음량, 피치, 텍스트 수정 후 재분리, 소스 추가)
   - 합치기와 다운로드
 - 개발용 화면은 바뀌거나 버려질 수 있다. 바뀌지 않는 것은 API(§8)와 계약(§6)이다.
-- **(제안)** 기존 `web/`(React, Vite)와 `Timeline.tsx`, 파형 표시는 재사용 후보로 남긴다. 실제로 쓸지는 UI 결정 때 정한다.
+- 개발용 화면은 `src/audyssey/devui/index.html` 한 장이며 vanilla JS를 사용한다. 빌드와 Node가 필요 없다. 기존 `web/`는 UI 담당이 최종 화면을 만들도록 그대로 둔다.
 
 ## 10. 실행과 운영
 
@@ -256,7 +258,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - `real`로 선택된 모델은 처음 쓰는 시점에 불러온다. 서버 시작 시 미리 불러오지 않는다.
 - **플래닝 real**: 기존 `model_manager` 방식을 쓴다. 설정으로 Gemini와 OpenAI 호환 주소(vLLM)를 고른다. 모델 선택은 도은 담당이다.
 - **전처리**: 길이를 검사하고, ffmpeg로 48kHz 원본 채널 오디오와 모노 오디오를 추출하고, 파형 피크를 만든다.
-- **시스템 요구사항**: stub 모드에도 Python(uv), ffmpeg, Node 20.19+ 또는 22.12+(개발용 화면 빌드)가 필요하다. README에 적는다.
+- **시스템 요구사항**: stub 모드에는 Python(uv), ffmpeg/ffprobe가 필요하다. 개발용 화면에는 Node가 필요 없다. 기존 `web/` 개발에만 Node 20.19+ 또는 22.12+가 필요하다.
 - **저장 (제안)**: DB 없이 작업마다 폴더 하나(`work/jobs/<id>/`, `job.json` 포함)를 쓴다. 서버를 재시작해도 작업이 남는다.
 - **실패 처리 (제안)**
   - 도구 예외가 나면 그 소스만 `failed`가 되고, 나머지 소스는 계속 진행한다.
@@ -282,12 +284,13 @@ src/audyssey/
   store.py            # Job 상태 ↔ work/jobs/<id>/
   api.py              # §8 API + 개발용 화면 정적 제공
   cli.py              # `audyssey serve`
+  devui/index.html    # 빌드 없는 개발용 화면 (Node 불필요)
   tools/
     planning/   stub.py real.py     # 도은 (plan, validate_plan)
     separation/ stub.py real.py     # SAM Audio
     filtering/  stub.py real.py     # 윤석 (judge)
     editing/    render.py           # DSP
-web/                  # 개발용 최소 화면 (§9)
+web/                  # UI 담당이 최종 UI 개발 시 사용
 tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 ```
 
