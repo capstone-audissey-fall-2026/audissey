@@ -42,3 +42,32 @@ jobs:
       - name: type-check
         run: |
           uv run ty check --output-format github --error-on-warning src/
+
+      - name: unit-tests
+        run: |
+          uv run python -m unittest discover tests
+
+  web-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
