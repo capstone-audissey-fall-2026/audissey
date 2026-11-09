@@ -58,7 +58,7 @@ class GroundingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             video = root / 'vfr.mp4'
-            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=3', '-vf', r'select=eq(n\,0)+eq(n\,1)+gt(n\,15)', '-fps_mode', 'vfr', '-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', str(video)], check=True, capture_output=True)
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=3', '-vf', r'select=eq(n\,0)+eq(n\,1)+gt(n\,15)', '-vsync', 'vfr', '-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', str(video)], check=True, capture_output=True)
             hint = VisualHint(time=0, box=(0, 0, .5, 1), description='left')
             out = stub.mask_video(video, hint, root / 'mask.mp4')
             self.assertEqual(video_info(out), video_info(video))

@@ -157,7 +157,7 @@ class Sam3GroundingTests(unittest.TestCase):
     def variable_video(self):
         import subprocess
         path = self.root / 'vfr.mp4'
-        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=3', '-vf', r'select=eq(n\,0)+eq(n\,1)+gt(n\,15)', '-fps_mode', 'vfr', '-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', str(path)], check=True, capture_output=True)
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=3', '-vf', r'select=eq(n\,0)+eq(n\,1)+gt(n\,15)', '-vsync', 'vfr', '-c:v', 'mpeg4', '-pix_fmt', 'yuv420p', str(path)], check=True, capture_output=True)
         self.state['num_frames'] = 16
         return path
 
@@ -178,3 +178,16 @@ class Sam3GroundingTests(unittest.TestCase):
         self.assertEqual(video_info(out), video_info(video))
         self.assertEqual(self.timestamps(out), self.timestamps(video))
         np.testing.assert_array_equal(frames(out)[:, :, :80], frames(video)[:, :, :80])
+
+    def test_mask_supports_ubuntu_2204_ffmpeg_options(self):
+        import subprocess
+        from audyssey.tools.grounding import stub
+        original = subprocess.run
+        def older_ffmpeg(args, **kwargs):
+            if '-fps_mode' in args:
+                raise subprocess.CalledProcessError(1, args, stderr='Unrecognized option fps_mode')
+            return original(args, **kwargs)
+        with patch.object(self.real.subprocess, 'run', side_effect=older_ffmpeg):
+            for tool in (self.real, stub):
+                out = tool.mask_video(self.video, self.hint, self.root / f'{tool.__name__}.mp4')
+                self.assertEqual(video_info(out), video_info(self.video))
