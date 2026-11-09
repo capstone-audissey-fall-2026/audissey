@@ -85,7 +85,10 @@ class GraphTests(unittest.TestCase):
     def test_plan_round_limit_warns(self):
         self.ctx.settings.max_plan_rounds = 1
         job = graph.analyze(self.job, self.ctx)
-        self.assertEqual(len(job.plan_issues), 1)
+        self.assertEqual(
+            [(issue.source_name, issue.kind) for issue in job.plan_issues],
+            [("ghost_sound", "not_visible_in_frame"), ("ghost_sound", "visual_hint_not_found")],
+        )
         self.assertEqual(
             next(s.status for s in job.steps if s.key == "plan"), "warning"
         )

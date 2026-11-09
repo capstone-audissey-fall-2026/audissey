@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from audyssey.contracts import PlanIssue, SourceKind, SourcePlan, Span
+from audyssey.contracts import PlanIssue, SourceKind, SourcePlan, Span, VisualHint
 
 
 def plan(
@@ -19,6 +19,15 @@ def plan(
             kind=kind,
             description=description,
             spans=[Span(start=start * duration, end=end * duration)],
+            visual_hint=(
+                VisualHint(
+                    time=1.0,
+                    box=(0.0, 0.0, 0.5, 1.0),
+                    description="man on the left" if name == "character_a" else "ghost",
+                )
+                if name in {"character_a", "ghost_sound"}
+                else None
+            ),
         )
         for name, kind, description, start, end in entries
         if name not in rejected

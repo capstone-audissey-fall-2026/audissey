@@ -57,3 +57,11 @@ class ToolsTests(unittest.TestCase):
         tools = load_tools(Settings(planner="real"))
         with self.assertRaises(NotImplementedError):
             tools.plan(Path("video"), Path("audio"), 3, [])
+
+    def test_stub_plans_include_visual_hints(self):
+        plans = {p.name: p for p in planning.plan(Path('v'), Path('a'), 3, [])}
+        hint = plans['character_a'].visual_hint
+        self.assertIsNotNone(hint)
+        self.assertEqual((hint.time, hint.box, hint.description), (1.0, (0, 0, .5, 1), 'man on the left'))
+        self.assertEqual(plans['ghost_sound'].visual_hint.description, 'ghost')
+        self.assertIsNone(plans['character_b'].visual_hint)
