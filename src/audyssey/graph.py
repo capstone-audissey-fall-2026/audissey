@@ -1,6 +1,9 @@
 import json
+from collections.abc import Callable
+from functools import wraps
 from dataclasses import dataclass, field
 
+from langsmith import traceable
 from langgraph.graph import END, START, StateGraph
 
 from audyssey.contracts import (
@@ -386,3 +389,15 @@ def handle_command(job: Job, cmd: Command, ctx: Context) -> Job:
             process_source(job, source, ctx)
             refresh_residual(job, ctx)
     return ctx.store.save(job)
+
+
+# Preserve the callable signature across LangSmith's extra-keyword protocol.
+handle_command: Callable[[Job, Command, Context], Job] = wraps(handle_command)(
+    traceable(
+        name="command",
+        process_inputs=lambda inputs: {
+            "job_id": inputs["job"].id,
+            "command": inputs["cmd"].model_dump(),
+        },
+    )(handle_command)
+)
