@@ -83,6 +83,25 @@ class SamSeparationTests(unittest.TestCase):
         self.model.to.assert_called_once_with('cpu')
         self.model.eval.assert_called_once_with()
 
+    def test_unused_rankers_and_span_predictor_dropped_before_device(self):
+        moved = []
+        self.model.to.side_effect = lambda device: moved.append(
+            (self.model.visual_ranker, self.model.text_ranker, hasattr(self.model, 'span_predictor'))
+        ) or self.model
+        self.separate()
+        self.assertEqual(moved, [(None, None, False)])
+
+    def test_rankers_and_span_predictor_kept_when_used(self):
+        self.model.to.side_effect = None
+        ranker, predictor = object(), object()
+        self.model.visual_ranker = self.model.text_ranker = ranker
+        self.model.span_predictor = predictor
+        with patch.dict(os.environ, AUDYSSEY_SAM_AUDIO_PREDICT_SPANS='true', AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES='3'):
+            self.separate()
+        self.assertIs(self.model.visual_ranker, ranker)
+        self.assertIs(self.model.text_ranker, ranker)
+        self.assertIs(self.model.span_predictor, predictor)
+
     def test_missing_gpu_env_message(self):
         with patch.dict(sys.modules, torch=None, sam_audio=None):
             with self.assertRaisesRegex(RuntimeError, 'SAM Audio is not installed: install the gpu/ environment'):
