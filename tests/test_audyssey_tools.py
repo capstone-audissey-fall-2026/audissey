@@ -50,10 +50,12 @@ class ToolsTests(unittest.TestCase):
         self.assertIs(inspect.unwrap(tools.separate), separation.separate)
         self.assertIs(inspect.unwrap(tools.judge), filtering.judge)
 
-    def test_load_tools_real_raises_not_implemented(self):
+    def test_load_tools_real_uses_planner(self):
         from audyssey.tools import load_tools
         from audyssey.settings import Settings
 
         tools = load_tools(Settings(planner="real"))
-        with self.assertRaises(NotImplementedError):
-            tools.plan(Path("video"), Path("audio"), 3, [])
+        from audyssey.tools.planning import real
+
+        self.assertIs(inspect.unwrap(tools.plan), real.plan)
+        self.assertIs(inspect.unwrap(tools.validate_plan), real.validate_plan)
