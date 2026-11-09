@@ -306,7 +306,9 @@ class HunyuanInferenceClient:
                 "0:v:0",
             ]
             if pad_duration is not None:
-                cmd.extend(["-vf", f"tpad=stop_mode=clone:stop_duration={pad_duration}"])
+                cmd.extend(
+                    ["-vf", f"tpad=stop_mode=clone:stop_duration={pad_duration}"]
+                )
             cmd.extend(
                 [
                     "-c:v",
