@@ -1,0 +1,35 @@
+name: publish-images
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [main, sam-audio]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk for GPU image
+        if: matrix.image == 'sam-audio'
+        run: sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/capstone-audissey-fall-2026/audyssey-${{ matrix.image }}:latest
+            ghcr.io/capstone-audissey-fall-2026/audyssey-${{ matrix.image }}:${{ github.sha }}
