@@ -54,3 +54,35 @@ class EditingTests(unittest.TestCase):
             out = editing.shift_pitch(self.tracks[0], self.root / "pitch.wav", pitch)
             self.assertEqual(read_wav(out).shape, read_wav(self.tracks[0]).shape)
 
+    def test_untouched_render_equals_original(self):
+        self.residual()
+        out = editing.render(self.job, self.root, False)
+        self.assertLess(
+            np.max(np.abs(read_wav(self.root / out.mix_wav) - self.audio)), 1e-4
+        )
+
+    def test_drop_removes_exactly_that_source(self):
+        self.residual()
+        self.job.sources[0].keep = False
+        out = editing.render(self.job, self.root, False)
+        np.testing.assert_allclose(
+            read_wav(self.root / out.mix_wav),
+            self.audio - read_wav(self.tracks[0]),
+            atol=1e-4,
+        )
+
+    def test_stems_only_kept_sources(self):
+        self.residual()
+        self.job.sources[0].keep = False
+        self.assertEqual(len(editing.render(self.job, self.root, False).stems), 1)
+        self.assertEqual(len(editing.render(self.job, self.root, True).stems), 2)
+
+    def test_all_dropped_renders_silence(self):
+        self.residual()
+        for source in self.job.sources:
+            source.keep = False
+        self.job.residual.keep = False
+        out = editing.render(self.job, self.root, False)
+        self.assertEqual(np.max(np.abs(read_wav(self.root / out.mix_wav))), 0)
+        self.assertEqual(out.stems, [])
+        self.assertGreater((self.root / out.video_mp4).stat().st_size, 0)
