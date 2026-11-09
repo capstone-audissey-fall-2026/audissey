@@ -2,10 +2,13 @@
 
 import base64
 import json
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TypeVar
 
+from langsmith import trace
+from langsmith.run_helpers import tracing_context
 from openai.types.chat import ChatCompletionContentPartParam, ChatCompletionMessageParam
 from pydantic import TypeAdapter, ValidationError
 
@@ -17,6 +20,10 @@ from audyssey.tools.planning import llm
 
 class _Sources(Model):
     sources: list[object]
+
+
+class _Issues(Model):
+    issues: list[PlanIssue]
 
 
 class _Span(Model):
@@ -62,11 +69,34 @@ def _request(
 ) -> _Response:
     with llm.chat_client(settings) as client:
         for attempt in range(2):
-            response = client.chat.completions.create(
-                model=settings.planner_model,
-                messages=messages,
-                response_format={"type": "json_object"},
-            )
+            # Record model/usage only: the SDK wrapper would also trace JPEG bytes.
+            with trace(
+                "planner_completion",
+                run_type="llm",
+                inputs={"model": settings.planner_model},
+                metadata={
+                    "ls_model_name": settings.planner_model,
+                    "ls_model_type": "chat",
+                },
+            ) as run:
+                with tracing_context(enabled=False, parent=False):
+                    response = client.chat.completions.create(
+                        model=settings.planner_model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                    )
+                usage = response.usage
+                run.end(
+                    outputs={
+                        "usage_metadata": {
+                            "input_tokens": usage.prompt_tokens,
+                            "output_tokens": usage.completion_tokens,
+                            "total_tokens": usage.total_tokens,
+                        }
+                    }
+                    if usage
+                    else {}
+                )
             raw = response.choices[0].message.content if response.choices else None
             try:
                 return response_type.model_validate_json(raw or "")
@@ -145,6 +175,20 @@ def plan(
 
 
 def validate_plan(video: Path, audio: Path, plans: list[SourcePlan]) -> list[PlanIssue]:
-    raise NotImplementedError(
-        "도은: see docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md §7.1"
+    settings = Settings()
+    messages = _messages(
+        video,
+        settings,
+        "Check the source list against the frames. Report only suspicious sources; "
+        "do not report unsupported guesses about unheard audio. "
+        "Return JSON with an issues list (empty when none). Each issue follows: "
+        + json.dumps(PlanIssue.model_json_schema()),
+        "Sources: " + json.dumps([source.model_dump() for source in plans]),
     )
+    try:
+        return _request(settings, messages, _Issues).issues
+    except RuntimeError:
+        logging.getLogger(__name__).warning(
+            "plan validator returned invalid JSON twice; proceeding without issues"
+        )
+        return []

@@ -51,7 +51,7 @@ class PlannerRealTests(unittest.TestCase):
         content = self.responses.pop(0)
         return httpx2.Response(200, json={
             "id": "test", "object": "chat.completion", "created": 0,
-            "model": "fake-model", "choices": [{
+            "model": "fake-model", "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}, "choices": [{
                 "index": 0, "finish_reason": "stop",
                 "message": {"role": "assistant", "content": content},
             }],
@@ -123,3 +123,61 @@ class PlannerRealTests(unittest.TestCase):
         for data in [self.video.read_bytes(), self.audio.read_bytes()]:
             self.assertNotIn(data.decode(), wire)
             self.assertNotIn(base64.b64encode(data).decode(), wire)
+
+    def test_validate_maps_issues(self):
+        plans = [SourcePlan(**self.source())]
+        issue = {"source_name": "person", "kind": "mismatch", "message": "check the person"}
+        self.responses = [json.dumps({"issues": [issue]}), json.dumps({"issues": []})]
+        self.assertEqual(real.validate_plan(self.video, self.audio, plans), [PlanIssue(**issue)])
+        self.assertEqual(real.validate_plan(self.video, self.audio, plans), [])
+        content = self.requests[0]["messages"][1]["content"]
+        text = "\n".join(p["text"] for p in content if p["type"] == "text")
+        self.assertIn(json.dumps([plans[0].model_dump()]), text)
+        self.assertIn("0.25", text)
+        self.assertEqual(len([p for p in content if p["type"] == "image_url"]), 2)
+        self.requests.clear()
+        self.responses = ["bad", json.dumps({"issues": [issue]})]
+        self.assertEqual(real.validate_plan(self.video, self.audio, plans), [PlanIssue(**issue)])
+        self.assertEqual(len(self.requests), 2)
+
+    def test_validate_bad_json_returns_no_issues(self):
+        for bad in ["bad", '{}', '{"issues": null}', '{"issues": [{}]}']:
+            with self.subTest(bad=bad):
+                self.requests.clear()
+                self.responses = [bad, bad]
+                with self.assertLogs(real.__name__, level="WARNING") as logs:
+                    self.assertEqual(real.validate_plan(self.video, self.audio, []), [])
+                self.assertEqual(len(self.requests), 2)
+                self.assertTrue(logs.output)
+
+    def test_planner_traces_exclude_frames_and_preserve_usage(self):
+        from langsmith import Client
+        from langsmith.run_helpers import tracing_context
+        from unittest.mock import Mock
+        from audyssey.settings import Settings
+        from audyssey.tools import load_tools
+
+        for nested in (False, True):
+            with self.subTest(nested=nested):
+                trace_client = Mock(spec=Client)
+                self.responses = [json.dumps({"sources": [self.source()]})]
+                planner = load_tools(Settings(planner="real")).plan if nested else real.plan
+                with tracing_context(enabled=True, client=trace_client):
+                    planner(self.video, self.audio, 2, [])
+                recorded = str(trace_client.mock_calls)
+                encoded = base64.b64encode(self.image.read_bytes()).decode()
+                self.assertNotIn(encoded, recorded)
+                llm_runs = [call.kwargs for call in trace_client.create_run.call_args_list
+                            if call.kwargs["run_type"] == "llm"]
+                self.assertEqual(len(llm_runs), 1)
+                if nested:
+                    tool_run = next(call.kwargs for call in trace_client.create_run.call_args_list
+                                    if call.kwargs["run_type"] == "tool")
+                    self.assertEqual(llm_runs[0]["parent_run_id"], tool_run["id"])
+                else:
+                    self.assertIsNone(llm_runs[0].get("parent_run_id"))
+                outputs = [call.kwargs.get("outputs", {})
+                           for call in trace_client.update_run.call_args_list]
+                self.assertTrue(any(output.get("usage_metadata") == {
+                    "input_tokens": 3, "output_tokens": 5, "total_tokens": 8,
+                } for output in outputs), outputs)
