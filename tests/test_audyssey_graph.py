@@ -1,4 +1,3 @@
-import shutil
 import tempfile
 import unittest
 from dataclasses import replace
@@ -24,7 +23,6 @@ from audyssey.store import JobStore
 from audyssey.tools import load_tools
 
 
-@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg required")
 class GraphTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

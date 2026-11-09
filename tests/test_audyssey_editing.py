@@ -1,4 +1,3 @@
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +8,6 @@ from audyssey.media import extract_audio, read_wav, write_wav
 from audyssey.tools.editing import render as editing
 
 
-@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg required")
 class EditingTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -1,5 +1,4 @@
 import json
-import shutil
 import socket
 import tempfile
 import threading
@@ -15,7 +14,6 @@ from audyssey.api import create_app
 from audyssey.settings import Settings
 
 
-@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg required")
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
