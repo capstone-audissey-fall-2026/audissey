@@ -326,3 +326,6 @@ data/
 /server/configs/hunyuanvideo-foley-*.yaml
 /assets/*.zip
 /videos/*.zip
+
+# Audyssey local job media and generated tracks
+/work/jobs/
