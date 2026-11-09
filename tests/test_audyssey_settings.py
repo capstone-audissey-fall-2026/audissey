@@ -54,3 +54,18 @@ class SettingsTests(unittest.TestCase):
         with patch.dict(os.environ, AUDYSSEY_REMOTE_TIMEOUT_S="0"):
             with self.assertRaises(ValidationError):
                 Settings()
+
+    def test_sam_audio_settings_from_env(self):
+        with patch.dict(os.environ, {
+            "AUDYSSEY_SAM_AUDIO_DEVICE": "cpu",
+            "AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES": "3",
+            "AUDYSSEY_SAM_AUDIO_PREDICT_SPANS": "true",
+            "AUDYSSEY_JUDGE_PASS_THRESHOLD": "0.7",
+        }, clear=True):
+            settings = Settings()
+        self.assertEqual(settings.sam_audio_device, "cpu")
+        self.assertEqual(settings.sam_audio_reranking_candidates, 3)
+        self.assertTrue(settings.sam_audio_predict_spans)
+        self.assertEqual(settings.judge_pass_threshold, 0.7)
+        with self.assertRaises(ValidationError):
+            Settings(sam_audio_reranking_candidates=0)
