@@ -57,10 +57,12 @@ uv run ty check --error-on-warning src/
 
 ## GPU 실행 상태
 
-dnn5(RTX A5000 24GB)에서 `facebook/sam-audio-small` 분리와 `facebook/sam-audio-judge`
-판정이 실제로 동작하는 것을 확인했습니다. 도구 서버 2개(GPU0·GPU1)와 main을 remote로
-연결한 E2E도 업로드 → ready → render까지 통과했습니다. 실측값은
-[설계 문서](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#sam-audio-실측-2026-11-10)에 있습니다.
+dnn5(RTX A5000 24GB × 4)에서 모든 모듈을 real로 연결한 E2E를 확인했습니다.
+`docker compose up` 한 번으로 main, 분리, Judge, SAM3, vLLM 컨테이너 5개가 뜨고,
+샘플 업로드 → 플래닝·검증 루프 → 분리·판정 → render까지 306초에 끝났습니다.
+Gemini 플래너와 높인 Judge 기준으로는 시각 힌트 마스크 분리와 재분리 루프까지 확인했습니다.
+실측값과 알려진 한계는
+[설계 문서](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#전체-e2e-실측-2026-11-10-dnn5-rtx-a5000-24gb--4)에 있습니다.
 
 ## 한 GPU 서버에서 전부 띄우기 (sv3-a100 등 Docker 되는 서버)
 

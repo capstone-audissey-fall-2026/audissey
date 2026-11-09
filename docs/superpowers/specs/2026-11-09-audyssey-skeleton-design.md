@@ -427,6 +427,27 @@ sv3-a100의 `mrfakename/sam-audio-large-tv` 실측은 GPU를 다른 작업이 �
 - Judge는 실행 중 triton으로 GPU 커널을 컴파일하므로 이미지에 `gcc`, `libc6-dev`가 필요하다.
 - sv3-a100의 기본 Docker 빌드 엔진은 `/home/common/docker/buildkit/...` 경로 문제로 빌드가 실패한다(서버 설정).
 
+### 전체 E2E 실측 (2026-11-10, dnn5 RTX A5000 24GB × 4)
+
+모든 모듈을 real로 두고 서버 사이 API로 연결해 `samples/sample.mp4`(1920×1080 60fps, 7.1초)를 처리했다.
+배치: 분리 GPU0(`facebook/sam-audio-small`), Judge GPU1(`facebook/sam-audio-judge`), SAM3 그라운딩 GPU2
+(`facebook/sam3.1`, 추적 2fps), vLLM 플래너 GPU3(`Qwen/Qwen2.5-VL-3B-Instruct`, `vllm/vllm-openai:v0.32.0`).
+
+| 실행 | 플래너 | 결과 |
+|---|---|---|
+| compose 컨테이너 5개 | vLLM | 306초 ready. 플래닝 루프 2라운드(검증 문제 → 재계획 → 한도 도달 경고), SAM3 위치 확인 2회, 분리·Judge·render 정상. GPU 7.9 / 7.4 / 5.1 / 16.5GB |
+| 직접 실행(기본) | vLLM | 229초 ready. 위와 같은 흐름 |
+| 직접 실행(루프 유도) | Gemini 2.5 Flash | Judge 기준 1.5로 1172초 ready. 시각 힌트 4개 → SAM3 마스크 영상 → SAM Audio 시각 조건 분리. 재분리 루프 최대 3회 후 경고. 앰비언스만 3.17로 통과 |
+
+플래너 단독 실호출: vLLM은 소스 3개·검증 문제 1개(21.8초/3.9초), Gemini는 소스 6개·검증 문제 1개(20.5초/10.5초).
+
+확인된 한계(성능이 아니라 연결 확인 단계의 기록):
+- **SAM3 위치 확인이 약하다.** 힌트 박스를 함께 주므로 없는 대상("ghost")도 found가 된다. 검증 기준은 플래닝 담당과 정한다.
+- **SAM3가 추적 중 대상을 놓치면 마스크 전체가 실패한다**(`No points are provided`, 아주 작은 박스에서 발생). 해당 소스만 실패하고 작업은 계속된다.
+- **Judge 점수:** overall이 대사·효과음에서 약 1.0, 앰비언스에서 약 3.2로 소스 종류에 따라 크게 다르다. 기준값 0.5는 미보정이며 필터링 담당과 정한다.
+- **Qwen2.5-VL-3B 플래너**는 2라운드 뒤 소스를 1개만 남기는 등 품질이 낮다. 연결 확인용 기본 구현이며 교체 대상이다.
+- **GPU 이미지 빌드:** 큰 git 의존성 다운로드가 자주 끊겨 Dockerfile이 5회 재시도한다. sv3-a100의 기본 Docker 빌드 엔진은 서버 설정 문제로 빌드가 되지 않는다.
+
 ## 14. 다음 단계 (승인 후)
 
 1. 구현 계획 작성
