@@ -1,0 +1,60 @@
+services:
+  main:
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-main:latest
+    build:
+      context: .
+      dockerfile: docker/main.Dockerfile
+    ports: ["127.0.0.1:8600:8600"]
+    env_file: .env
+    environment:
+      AUDYSSEY_SEPARATOR: ${AUDYSSEY_SEPARATOR:-remote}
+      AUDYSSEY_SEPARATOR_URL: ${AUDYSSEY_SEPARATOR_URL:-http://separation:8700}
+      AUDYSSEY_FILTER: ${AUDYSSEY_FILTER:-remote}
+      AUDYSSEY_FILTER_URL: ${AUDYSSEY_FILTER_URL:-http://judge:8700}
+      AUDYSSEY_WORK_DIR: /app/work/jobs
+    volumes: ["jobs:/app/work/jobs"]
+
+  separation:
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest
+    build:
+      context: .
+      dockerfile: docker/sam-audio.Dockerfile
+    command: ["audyssey", "tool-server", "--tool", "separation", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
+    env_file: .env
+    environment:
+      HF_HOME: /hf
+      HF_HUB_OFFLINE: "1"
+      CUDA_VISIBLE_DEVICES: "0"
+      AUDYSSEY_TOOL_TOKEN: ${AUDYSSEY_TOOL_TOKEN:?set AUDYSSEY_TOOL_TOKEN in .env}
+    volumes: ["${HF_CACHE:-~/.cache/huggingface}:/hf:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${AUDYSSEY_GPU:-0}"]
+              capabilities: [gpu]
+
+  judge:
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest
+    build:
+      context: .
+      dockerfile: docker/sam-audio.Dockerfile
+    command: ["audyssey", "tool-server", "--tool", "filtering", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
+    env_file: .env
+    environment:
+      HF_HOME: /hf
+      HF_HUB_OFFLINE: "1"
+      CUDA_VISIBLE_DEVICES: "0"
+      AUDYSSEY_TOOL_TOKEN: ${AUDYSSEY_TOOL_TOKEN:?set AUDYSSEY_TOOL_TOKEN in .env}
+    volumes: ["${HF_CACHE:-~/.cache/huggingface}:/hf:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${AUDYSSEY_GPU:-0}"]
+              capabilities: [gpu]
+
+volumes:
+  jobs:
