@@ -6,7 +6,7 @@ services:
       args:
         APP_UID: ${V2A_DOCKER_UID:-1000}
         APP_GID: ${V2A_DOCKER_GID:-1000}
-    image: ${V2A_INSPECT_SERVER_IMAGE:-v2a-inspect-server:local}
+    image: ${V2A_INSPECT_SERVER_IMAGE:-audyssey-server:local}
     restart: unless-stopped
     env_file:
       - path: .env
@@ -47,7 +47,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${V2A_INSPECT_IMAGE:-v2a-inspect:local}
+    image: ${V2A_INSPECT_IMAGE:-audyssey:local}
     restart: unless-stopped
     env_file:
       - path: .env

@@ -9,7 +9,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  SERVER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/v2a_inspect_server
+  SERVER_IMAGE_NAME: ghcr.io/${{ github.repository }}-server
 
 jobs:
   publish:
