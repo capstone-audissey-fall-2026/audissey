@@ -1,3 +1,5 @@
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,3 +56,38 @@ class MediaTests(unittest.TestCase):
         peaks = compute_peaks(extract_audio(self.video, self.root / "audio.wav", False))
         self.assertEqual(len(peaks), 800)
         self.assertTrue(all(0 <= x <= 1 for x in peaks))
+
+    def test_extract_frames_evenly_with_times(self):
+        from audyssey.media import extract_frames
+
+        for count, times in [(1, [1.5]), (4, [0.375, 1.125, 1.875, 2.625])]:
+            frames = extract_frames(self.video, count, self.root / f"frames-{count}")
+            self.assertEqual([time for time, _ in frames], times)
+            for _, path in frames:
+                self.assertEqual(path.read_bytes()[:2], b"\xff\xd8")
+                info = json.loads(subprocess.check_output([
+                    "ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+                    "-of", "json", str(path),
+                ]))
+                self.assertEqual(info["streams"][0]["width"], 160)
+
+    def test_extract_frames_downscales_and_handles_short_video(self):
+        from audyssey.media import extract_frames
+
+        wide = self.root / "wide.mp4"
+        subprocess.run([
+            "ffmpeg", "-v", "error", "-i", str(self.video),
+            "-vf", "scale=1024:768", str(wide),
+        ], check=True, capture_output=True)
+        frame = extract_frames(wide, 1, self.root / "wide-frames")[0][1]
+        width = subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries", "stream=width",
+            "-of", "csv=p=0", str(frame),
+        ], text=True)
+        self.assertEqual(int(width), 512)
+        short = make_video(self.root / "short.mp4", seconds=0.1)
+        frames = extract_frames(short, 16, self.root / "short-frames")
+        self.assertEqual(len(frames), 16)
+        self.assertTrue(all(path.is_file() for _, path in frames))
+        with self.assertRaises(ValueError):
+            extract_frames(self.video, 0, self.root / "invalid")
