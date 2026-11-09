@@ -115,3 +115,79 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(job.state, "failed")
         self.assertEqual(job.error, "planner unavailable")
         self.assertEqual(self.ctx.store.load(job.id).state, "failed")
+
+    def test_analyze_then_untouched_render_equals_original(self):
+        job = graph.analyze(self.job, self.ctx)
+        graph.handle_command(job, Render(), self.ctx)
+        np.testing.assert_allclose(
+            read_wav(self.directory / job.outputs.mix_wav),
+            read_wav(self.directory / "audio.wav"),
+            atol=1e-4,
+        )
+
+    def test_commands_update_values(self):
+        job = graph.analyze(self.job, self.ctx)
+        for cmd in [
+            Drop(source_id="s1"),
+            SetGain(source_id="s2", gain=0.5),
+            Keep(source_id="residual"),
+            SetPitch(source_id="s2", semitones=5),
+        ]:
+            graph.handle_command(job, cmd, self.ctx)
+        self.assertFalse(job.sources[0].keep)
+        self.assertEqual(job.sources[1].gain, 0.5)
+        self.assertEqual(job.sources[1].pitch_semitones, 5)
+        self.assertTrue(job.residual.keep)
+        with self.assertRaises(ValueError):
+            graph.handle_command(
+                job, SetPitch(source_id="residual", semitones=1), self.ctx
+            )
+
+    def test_reseparate_and_add_source(self):
+        job = graph.analyze(self.job, self.ctx)
+        before = (self.directory / "residual.wav").stat().st_mtime_ns
+        graph.handle_command(
+            job, Reseparate(source_id="s2", description="new"), self.ctx
+        )
+        self.assertEqual(job.sources[1].plan.description, "new")
+        self.assertEqual(job.sources[1].attempts, 1)
+        self.assertNotEqual(
+            (self.directory / "residual.wav").stat().st_mtime_ns, before
+        )
+        graph.handle_command(
+            job,
+            AddSource(plan=SourcePlan(name="new", kind="sfx", description="sound")),
+            self.ctx,
+        )
+        self.assertEqual(job.sources[-1].id, "s4")
+        with self.assertRaises(ValueError):
+            graph.handle_command(
+                job,
+                AddSource(
+                    plan=SourcePlan(
+                        name="bad",
+                        kind="sfx",
+                        description="sound",
+                        spans=[Span(start=0, end=4)],
+                    )
+                ),
+                self.ctx,
+            )
+
+    def test_unknown_source_id(self):
+        job = graph.analyze(self.job, self.ctx)
+        snapshot = job.model_dump_json()
+        version = self.ctx.store.load(job.id).version
+        with self.assertRaises(KeyError):
+            graph.handle_command(job, Drop(source_id="s99"), self.ctx)
+        self.assertEqual(job.model_dump_json(), snapshot)
+        self.assertEqual(self.ctx.store.load(job.id).version, version)
+
+    def test_reseparate_rejects_invalid_span_without_mutation(self):
+        job = graph.analyze(self.job, self.ctx)
+        snapshot = job.model_dump_json()
+        with self.assertRaises(ValueError):
+            graph.handle_command(
+                job, Reseparate(source_id="s2", spans=[Span(start=0, end=4)]), self.ctx
+            )
+        self.assertEqual(job.model_dump_json(), snapshot)

@@ -4,12 +4,26 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from audyssey.contracts import Job, PlanIssue, Source, SourcePlan, StepStatus
+from audyssey.contracts import (
+    AddSource,
+    Command,
+    Drop,
+    Job,
+    Keep,
+    PlanIssue,
+    Render,
+    Reseparate,
+    SetGain,
+    SetPitch,
+    Source,
+    SourcePlan,
+    StepStatus,
+)
 from audyssey.media import compute_peaks, extract_audio, probe
 from audyssey.settings import Settings
 from audyssey.store import JobStore
 from audyssey.tools import Tools
-from audyssey.tools.editing.render import compute_residual
+from audyssey.tools.editing.render import compute_residual, render
 
 
 @dataclass
@@ -311,4 +325,56 @@ def analyze(job: Job, ctx: Context) -> Job:
         update_step(
             job, ctx, StepStatus(key=active_key, status="failed", message=str(exc))
         )
+    return ctx.store.save(job)
+
+
+def handle_command(job: Job, cmd: Command, ctx: Context) -> Job:
+    if isinstance(cmd, Render):
+        update_step(job, ctx, StepStatus(key="render", status="running"))
+        try:
+            job.outputs = render(job, ctx.store.dir(job.id), cmd.include_residual_stem)
+        except Exception as exc:
+            update_step(
+                job, ctx, StepStatus(key="render", status="failed", message=str(exc))
+            )
+            raise
+        update_step(job, ctx, StepStatus(key="render", status="done"))
+    elif isinstance(cmd, AddSource):
+        plans, issues = check_plans([cmd.plan], job.duration)
+        if issues:
+            raise ValueError("; ".join(i.message for i in issues))
+        if any(s.plan.name == cmd.plan.name for s in job.sources):
+            raise ValueError("source name already exists; use reseparate")
+        number = max((int(s.id[1:]) for s in job.sources), default=0) + 1
+        source = Source(id=f"s{number}", plan=plans[0])
+        job.sources.append(source)
+        process_source(job, source, ctx)
+        refresh_residual(job, ctx)
+    else:
+        source = job.find_source(cmd.source_id)
+        target = job.residual if cmd.source_id == "residual" else source
+        if target is None:
+            raise KeyError(cmd.source_id)
+        if isinstance(cmd, (Keep, Drop)):
+            target.keep = isinstance(cmd, Keep)
+        elif isinstance(cmd, SetGain):
+            target.gain = cmd.gain
+        elif isinstance(cmd, SetPitch):
+            if source is None:
+                raise ValueError("residual does not support pitch")
+            source.pitch_semitones = cmd.semitones
+        elif isinstance(cmd, Reseparate):
+            if source is None:
+                raise ValueError("residual cannot be reseparated")
+            plan = source.plan.model_copy(deep=True)
+            if cmd.description is not None:
+                plan.description = cmd.description
+            if cmd.spans is not None:
+                plan.spans = cmd.spans
+            _, issues = check_plans([plan], job.duration)
+            if issues:
+                raise ValueError("; ".join(i.message for i in issues))
+            source.plan, source.attempts = plan, 0
+            process_source(job, source, ctx)
+            refresh_residual(job, ctx)
     return ctx.store.save(job)
