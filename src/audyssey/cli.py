@@ -12,6 +12,7 @@ from audyssey.toolserver import create_tool_app
 class Tool(str, Enum):
     separation = "separation"
     filtering = "filtering"
+    grounding = "grounding"
 
 
 app = typer.Typer()

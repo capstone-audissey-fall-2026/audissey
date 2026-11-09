@@ -82,3 +82,12 @@ class ToolServerTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertFalse(FilterResult.model_validate(response.json()).passed)
             self.assertEqual(client.post('/judge').status_code, 401)
+
+    def test_grounding_endpoints_validate_hint_and_authenticate(self):
+        client = self.client('grounding', 't')
+        self.assertEqual(client.get('/health').json(), {'tools': ['grounding'], 'impl': 'stub'})
+        for endpoint in ['/locate', '/mask']:
+            self.assertEqual(client.post(endpoint).status_code, 401)
+            for hint in ['{', '{}', '{"time":0,"box":[0,0,2,1],"description":"a"}']:
+                response = client.post(endpoint, files={'video': self.files['video']}, data={'hint': hint}, headers={'Authorization': 'Bearer t'})
+                self.assertEqual(response.status_code, 422, response.text)

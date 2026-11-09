@@ -9,14 +9,14 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
-from audyssey.contracts import FilterResult, SourcePlan
+from audyssey.contracts import FilterResult, GroundResult, SourcePlan, VisualHint
 
 # ponytail: one GPU model, one request at a time; add a queue or batching if throughput matters
 _model_lock = Lock()
 
 
 def create_tool_app(
-    tools: list[Literal["separation", "filtering"]],
+    tools: list[Literal["separation", "filtering", "grounding"]],
     impl: Literal["stub", "real"],
     token: str,
 ) -> FastAPI:
@@ -31,7 +31,9 @@ def create_tool_app(
         return await call_next(request)
 
     @app.get("/health")
-    def health() -> dict[str, str | list[Literal["separation", "filtering"]]]:
+    def health() -> dict[
+        str, str | list[Literal["separation", "filtering", "grounding"]]
+    ]:
         return {"tools": tools, "impl": impl}
 
     def parse_plan(raw: str) -> SourcePlan:
@@ -77,5 +79,35 @@ def create_tool_app(
                 track_path.write_bytes(track.file.read())
                 with _model_lock:
                     return filtering.judge(mono_path, track_path, source_plan)
+
+    if "grounding" in tools:
+        grounding = import_module(f"audyssey.tools.grounding.{impl}")
+
+        def parse_hint(raw: str) -> VisualHint:
+            try:
+                return VisualHint.model_validate_json(raw)
+            except ValidationError:
+                raise HTTPException(422, "invalid visual hint") from None
+
+        @app.post("/locate")
+        def locate(video: UploadFile, hint: Annotated[str, Form()]) -> GroundResult:
+            visual_hint = parse_hint(hint)
+            with TemporaryDirectory() as tmp:
+                path = Path(tmp) / "video.mp4"
+                path.write_bytes(video.file.read())
+                with _model_lock:
+                    return grounding.locate(path, visual_hint)
+
+        @app.post("/mask")
+        def mask(video: UploadFile, hint: Annotated[str, Form()]) -> Response:
+            visual_hint = parse_hint(hint)
+            with TemporaryDirectory() as tmp:
+                path = Path(tmp) / "video.mp4"
+                path.write_bytes(video.file.read())
+                with _model_lock:
+                    out = grounding.mask_video(
+                        path, visual_hint, Path(tmp) / "mask.mp4"
+                    )
+                return Response(out.read_bytes(), media_type="video/mp4")
 
     return app

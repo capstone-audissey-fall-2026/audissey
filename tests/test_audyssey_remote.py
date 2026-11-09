@@ -26,7 +26,7 @@ class RemoteTests(unittest.TestCase):
     def setUpClass(cls):
         cls.servers = []
         cls.urls = []
-        for tool in ['separation', 'filtering']:
+        for tool in ['separation', 'filtering', 'grounding']:
             listener = socket.socket()
             listener.bind(('127.0.0.1', 0))
             server = uvicorn.Server(uvicorn.Config(create_tool_app([tool], 'stub', 't'), log_level='error', ws='none'))
@@ -126,3 +126,22 @@ class RemoteTests(unittest.TestCase):
                 self.assertIn('http://gpu:8700', message)
                 for secret in ['secret-url-password', 'secret-query-key', 'secret-tool-token']:
                     self.assertNotIn(secret, message)
+
+    def test_grounding_remote_matches_direct_calls(self):
+        from audyssey.contracts import VisualHint
+        from audyssey.tools.grounding import remote, stub
+        from tests.test_audyssey_grounding import frames, video_info
+        hint = VisualHint(time=1, box=(0, 0, .5, 1), description='left')
+        with patch.dict(os.environ, AUDYSSEY_GROUNDER='remote', AUDYSSEY_GROUNDING_URL=self.urls[2]):
+            tools = load_tools(Settings())
+            self.assertEqual(tools.locate(self.video, hint), stub.locate(self.video, hint))
+            ghost = hint.model_copy(update={'description': 'ghost'})
+            self.assertFalse(remote.locate(self.video, ghost).found)
+            out = tools.mask_video(self.video, hint, self.root / 'remote/mask.mp4')
+            direct = stub.mask_video(self.video, hint, self.root / 'direct.mp4')
+            self.assertEqual(video_info(out), video_info(direct))
+            np.testing.assert_array_equal(frames(out), frames(direct))
+            with patch.dict(os.environ, AUDYSSEY_TOOL_TOKEN=''):
+                for call in [lambda: remote.locate(self.video, hint), lambda: remote.mask_video(self.video, hint, out)]:
+                    with self.assertRaisesRegex(RuntimeError, '401'):
+                        call()
