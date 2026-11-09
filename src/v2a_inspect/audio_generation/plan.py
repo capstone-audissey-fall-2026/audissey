@@ -33,7 +33,7 @@ def build_audio_plan(
         if end_time <= start_time:
             end_time = start_time + 0.1
 
-        source = sources.get(track.sound_source_id)
+        source = sources.get(track.sound_source_id) if track.sound_source_id else None
         source_prefix = (
             f"{source.label}, "
             if source and source.label.lower() not in track.label.lower()
