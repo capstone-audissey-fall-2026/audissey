@@ -8,6 +8,8 @@ dependencies = [
     "torchaudio",
     "torchvision",
     "torchcodec",
+    # torchcodec cu128 links NVIDIA NPP, which is not part of the torch wheels.
+    "nvidia-npp-cu12",
     # sam-audio@bb4c699 calls hub APIs removed in huggingface-hub 1.0 (proxies, resume_download).
     "huggingface-hub<1.0",
     "sam-audio @ git+https://github.com/facebookresearch/sam-audio@bb4c6999d2677c7402360e426afc01ddfad6dce0",
