@@ -29,6 +29,7 @@ uv run ty check --error-on-warning src/
 | `AUDYSSEY_GROUNDING_URL` | 빈 문자열 | remote 그라운딩 도구 서버 주소 |
 | `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1` | 기존 캐시의 SAM3.1 모델 ID |
 | `AUDYSSEY_SAM3_DEVICE` | `cuda` | SAM3 CUDA 장치 (`cuda:0` 등) |
+| `AUDYSSEY_PLANNER_FRAMES` | `4` | 플래너·검증기 JPEG 프레임 수 (1~16) |
 | `AUDYSSEY_MAX_PLAN_ROUNDS` | `2` | 플래닝 최대 회차 (1 이상) |
 | `AUDYSSEY_MAX_SEPARATION_RETRIES` | `2` | 재분리 횟수, 총 시도 최대 3회 |
 | `AUDYSSEY_MAX_DURATION_S` | `30` | 업로드 영상 길이 상한 |
@@ -42,7 +43,7 @@ uv run ty check --error-on-warning src/
 
 설정은 환경변수로만 읽으며 `.env`는 읽지 않습니다. 작업은 `<WORK_DIR>/<id>/job.json`과 상대 경로 파일로 보존됩니다. 서버 재시작 후 `GET /api/jobs`와 `GET /api/jobs/{id}`로 다시 조회할 수 있습니다. 단일 서버 프로세스로 실행합니다. 실행 중 재분리·추가·합치기는 409를 반환하며 keep/drop과 음량·피치 변경은 허용합니다.
 
-팀원은 담당 `src/audyssey/tools/<모듈>/real.py`의 동일 시그니처 함수를 구현하고 `AUDYSSEY_PLANNER=real`, `AUDYSSEY_SEPARATOR=real`, `AUDYSSEY_FILTER=real` 중 해당 값을 설정합니다. 분리는 SAM Audio, 필터링은 SAM Audio Judge 예시로 구현되어 있습니다. 플래닝 real은 담당자가 구현할 placeholder입니다.
+팀원은 담당 `src/audyssey/tools/<모듈>/real.py`의 동일 시그니처 함수를 구현하고 `AUDYSSEY_PLANNER=real`, `AUDYSSEY_SEPARATOR=real`, `AUDYSSEY_FILTER=real` 중 해당 값을 설정합니다. 분리는 SAM Audio, 필터링은 SAM Audio Judge 예시로 구현되어 있습니다. 플래닝 real은 연결 확인용 LLM 기본 구현이며 도은 담당자가 교체할 수 있습니다.
 
 - 도은: `planning/real.py`의 `plan`, `validate_plan`
 - SAM Audio 담당: `separation/real.py`의 `separate`
@@ -73,9 +74,28 @@ docker compose up
 # http://localhost:8600 에서 samples/sample.mp4 업로드
 ```
 
-main, separation, judge, grounding 네 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
+main, separation, judge, grounding, vllm 다섯 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
 연결되며 GPU 도구 포트는 호스트에 공개하지 않습니다. 원격 서버 UI는 SSH 터널로
-연결합니다. 작업은 `jobs` 볼륨에 남습니다. 플래너는 기본 stub입니다.
+연결합니다. 작업은 `jobs` 볼륨에 남습니다. Compose 플래너는 기본 real이며 내부 `http://vllm:8000/v1`로
+연결합니다. Python 직접 실행의 기본값은 계속 stub입니다. vLLM은
+`Qwen/Qwen2.5-VL-3B-Instruct` 캐시를 미리 준비해야 하며 GPU 기본값은 0,
+메모리 사용 비율은 0.85입니다. 다른 GPU 도구와 함께 실행할 때는
+`AUDYSSEY_VLLM_GPU`와 메모리 여유를 조정합니다.
+
+vLLM 이미지는 [공식 v0.32.0 릴리스](https://github.com/vllm-project/vllm/releases/tag/v0.32.0)로
+고정했습니다. [해당 버전의 지원 모델](https://docs.vllm.ai/en/v0.32.0/models/supported_models.html)에
+Qwen2.5-VL-3B가 있습니다. 이미지 pull과 GPU 실행은 운영자 확인이 필요합니다.
+Gemini 키를 `.env`의 `GOOGLE_API_KEY`로 준비한 경우 다음 두 줄로 전환합니다.
+`AUDYSSEY_PLANNER_API_KEY`를 따로 설정하면 그 값이 우선합니다.
+
+```dotenv
+AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
+```
+
+Gemini에서는 `docker compose up main separation judge`로 vLLM 없이 실행할 수 있습니다.
+GPU 없이 Compose main만 실행하려면 `AUDYSSEY_PLANNER=stub`과 분리·필터링 stub
+또는 원격 도구 주소를 설정합니다.
 
 이미지는 `ghcr.io/capstone-audissey-fall-2026/audyssey-main:latest`와
 `ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest`입니다.
@@ -177,19 +197,88 @@ uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 
 
 ## 플래너를 Gemini/vLLM에 연결하기
 
+`planning/real.py`는 도은 담당 모듈의 교체 가능한 기본 구현입니다. 영상 길이에 고르게
+뽑은 JPEG 프레임(기본 4장, 가로 최대 512px)과 시각·피드백을 기존 OpenAI 호환
+`chat_client(settings)`로 보냅니다. 영상·오디오 파일은 보내지 않습니다. 오디오 전사도
+아직 없으므로 실제 들리는 소리를 확인하는 품질 검증용으로 쓰지 않습니다.
+
+소스별 Pydantic 검증 후 잘못된 소스는 버리고, 시간과 박스 범위를 자릅니다.
+형식이 깨진 응답은 한 번만 다시 요청하며, 계속 깨지면 플래닝은 실패합니다.
+검증기는 의심스러운 소스만 `PlanIssue`로 보고하고, 두 차례 형식 오류이면 경고를
+기록한 뒤 이슈 없이 진행합니다. API 연결·인증 오류는 호출자에게 전달됩니다.
+
 ```bash
-uv sync --extra ui --extra llm
-# vLLM (로컬 서버가 인증을 요구하지 않으면 키 생략 가능)
-export AUDYSSEY_PLANNER_BASE_URL=http://localhost:8000/v1
-export AUDYSSEY_PLANNER_MODEL=your-served-model
-export AUDYSSEY_PLANNER_API_KEY=...
-# Gemini OpenAI 호환 API를 쓸 때는 위 값을 다음으로 교체:
-# AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-# AUDYSSEY_PLANNER_MODEL=<사용 가능한 Gemini 모델 ID>
-# AUDYSSEY_PLANNER_API_KEY=<Gemini API 키>
+uv sync --dev --extra ui --extra llm
+# Gemini: .env에 GOOGLE_API_KEY를 비공개로 준비 (커밋하거나 출력하지 않음)
+AUDYSSEY_PLANNER=real \
+AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
+AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
+uv run --env-file .env python -c 'import os; from audyssey.cli import serve; os.environ["AUDYSSEY_PLANNER_API_KEY"] = os.environ.get("AUDYSSEY_PLANNER_API_KEY") or os.environ["GOOGLE_API_KEY"]; serve()'
 ```
 
-`planning/real.py` 담당자는 `chat_client(settings)`를 가져와 `client.chat.completions.create(model=settings.planner_model, ...)`로 호출합니다. `AUDYSSEY_PLANNER=real`은 real 본체를 구현한 뒤 설정합니다. 이번 변경은 클라이언트 진입점만 제공하며 real 본체는 placeholder입니다. 영상은 프레임 이미지로, 오디오는 텍스트로 바꿔 넣어 Gemini와 vLLM에서 같은 코드가 돌게 합니다.
+로컬 vLLM 주소가 이미 있으면 `AUDYSSEY_PLANNER=real`,
+`AUDYSSEY_PLANNER_BASE_URL=http://localhost:8000/v1`,
+`AUDYSSEY_PLANNER_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`를 설정하고
+`uv run audyssey serve`를 실행합니다. 인증 없는 로컬 서버는 키를 생략할 수 있습니다.
+Compose의 vLLM 포트는 호스트에 공개하지 않으므로 아래 확인은 Compose 네트워크 안에서 합니다.
+
+### 운영자 실연결 확인 (이 브랜치에서는 실행하지 않음)
+
+같은 스크립트로 `samples/sample.mp4`의 `plan`과 `validate_plan`을 각각 한 번 호출해
+소스 수·이슈 수·소요 시간을 출력합니다. JSON 재요청과 SDK의 전송 재시도는 별도로
+발생할 수 있으므로 반복 호출하지 않습니다. 키·미디어·전체 모델 응답은 출력하지 않습니다.
+
+```bash
+cat > /tmp/audyssey-planner-live.py <<'PYTHON'
+import json
+import os
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from audyssey.media import extract_audio, probe
+from audyssey.tools.planning.real import plan, validate_plan
+
+os.environ["LANGSMITH_TRACING"] = "false"
+if os.environ.get("AUDYSSEY_PLANNER_BASE_URL", "").startswith("https://generativelanguage.googleapis.com/"):
+    os.environ["AUDYSSEY_PLANNER_API_KEY"] = os.environ.get("AUDYSSEY_PLANNER_API_KEY") or os.environ["GOOGLE_API_KEY"]
+video = Path(os.environ.get("AUDYSSEY_SMOKE_VIDEO", "samples/sample.mp4"))
+with TemporaryDirectory() as tmp:
+    audio = extract_audio(video, Path(tmp) / "audio.wav", False)
+    duration, _ = probe(video)
+    start = time.monotonic()
+    plans = plan(video, audio, duration, [])
+    plan_s = time.monotonic() - start
+    start = time.monotonic()
+    issues = validate_plan(video, audio, plans)
+    print(json.dumps({"sources": len(plans), "issues": len(issues),
+                      "plan_s": plan_s, "validate_s": time.monotonic() - start}))
+PYTHON
+
+# Gemini: root uv environment; .env is read only by the human operator.
+AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
+AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
+uv run --env-file .env python /tmp/audyssey-planner-live.py
+
+# vLLM: pre-cache Qwen weights/processor under HF_CACHE before starting.
+docker compose pull vllm
+docker compose build main
+docker compose up -d vllm
+# Wait for the vLLM log to report that the API server is ready.
+docker compose run --rm -T --entrypoint python \
+  -e AUDYSSEY_PLANNER_BASE_URL=http://vllm:8000/v1 \
+  -e AUDYSSEY_PLANNER_MODEL=Qwen/Qwen2.5-VL-3B-Instruct \
+  -e AUDYSSEY_PLANNER_API_KEY=unused \
+  -e AUDYSSEY_SMOKE_VIDEO=/samples/sample.mp4 \
+  -v "$PWD/samples:/samples:ro" main - < /tmp/audyssey-planner-live.py
+```
+
+Docker/GPU 실측과 Gemini/vLLM 실제 응답은 운영자가 확인해야 합니다.
+비밀값 없이 Compose만 검사하려면 다음을 실행합니다. `--no-env-resolution`으로 서비스의
+`.env` 로딩을 막고 `--env-file`로 자동 `.env` 보간도 막습니다.
+
+```bash
+env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resolution --quiet
+```
 
 ## LangSmith로 보기
 
@@ -200,7 +289,8 @@ export LANGSMITH_PROJECT=audyssey
 uv run audyssey serve
 ```
 
-키와 tracing 환경변수를 설정하지 않은 기본 상태에서는 아무것도 보내지 않습니다. 호스팅된 LangSmith로 보낼 때는 세 변수를 모두 설정합니다. tracing만 켜고 키를 생략해도 전송 시도는 일어날 수 있으므로 끌 때는 `LANGSMITH_TRACING=false`를 씁니다. 그래프, 도구, 명령과 래핑된 LLM 호출의 토큰 사용량을 볼 수 있습니다. 명령 입력은 `job_id`와 명령만 남기고 Job 전체·설정은 제외합니다. 오디오·영상 바이트와 키·토큰은 올리지 않고 경로와 메타데이터만 기록합니다.
+키와 tracing 환경변수를 설정하지 않은 기본 상태에서는 아무것도 보내지 않습니다. 호스팅된 LangSmith로 보낼 때는 세 변수를 모두 설정합니다. tracing만 켜고 키를 생략해도 전송 시도는 일어날 수 있으므로 끌 때는 `LANGSMITH_TRACING=false`를 씁니다. 그래프, 도구, 명령과 래핑된 LLM 호출의 토큰 사용량을 볼 수 있습니다. 명령 입력은 `job_id`와 명령만 남기고 Job 전체·설정은 제외합니다. 오디오·영상·프레임 바이트와 키·토큰은 올리지 않고 경로와 메타데이터만 기록합니다. 플래너 LLM trace에는 모델명과 토큰 사용량만 남기며 이미지가 포함된 프롬프트와 원문 응답은 기록하지 않습니다.
+
 
 ## SAM3 시각 그라운딩
 

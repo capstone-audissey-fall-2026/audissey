@@ -80,3 +80,11 @@ class SettingsTests(unittest.TestCase):
                          ('remote', 'http://grounding:8700', 'cpu', 'local/model'))
         with self.assertRaises(ValidationError):
             Settings(grounder='unknown')
+
+    def test_planner_frames_bounds_and_env(self):
+        self.assertEqual(Settings().planner_frames, 4)
+        with patch.dict(os.environ, AUDYSSEY_PLANNER_FRAMES="8"):
+            self.assertEqual(Settings().planner_frames, 8)
+        for count in (0, 17):
+            with self.assertRaises(ValidationError):
+                Settings(planner_frames=count)

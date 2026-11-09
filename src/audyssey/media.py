@@ -101,3 +101,42 @@ def compute_peaks(wav: Path, buckets: int = 800) -> list[float]:
         float(np.clip(np.max(np.abs(chunk)), 0, 1))
         for chunk in np.array_split(data, min(buckets, len(data)))
     ]
+
+
+def extract_frames(video: Path, count: int, out_dir: Path) -> list[tuple[float, Path]]:
+    """Sample one JPEG at each equal interval's midpoint (frame-rate rounded)."""
+    if count < 1:
+        raise ValueError("frame count must be positive")
+    duration, _ = probe(video)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(video),
+                "-vf",
+                f"fps={count / duration},scale='min(512,iw)':-1",
+                "-frames:v",
+                str(count),
+                str(out_dir / "%02d.jpg"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        message = (
+            exc.stderr if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+        )
+        raise MediaError(message) from exc
+    frames = [
+        ((i + 0.5) * duration / count, out_dir / f"{i + 1:02d}.jpg")
+        for i in range(count)
+    ]
+    if any(not path.is_file() for _, path in frames):
+        raise MediaError("could not extract all planner frames")
+    return frames
