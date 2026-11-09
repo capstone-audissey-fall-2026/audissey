@@ -354,54 +354,45 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 | SAM Audio 실측(GPU 메모리, 10초 처리 시간, torch 버전 호환성) | 광웅, separation real 작업 시 |
 | 팀원의 SAM Audio 공식 승인 또는 미러 사용 | 팀 |
 
-### GPU 런타임 호환성 차단 (2026-11-10 정적 리뷰)
+### GPU 런타임 호환성 해결 (2026-11-10)
 
-`gpu/` lock·설치 성공 후 고정 upstream과 실제 설치 소스를 대조해 API 불일치를
-확인했다. `huggingface-hub==2.4.0`의 `ModelHubMixin.from_pretrained`는
-`proxies`, `resume_download`를 전달하지 않지만, 고정 SAM Audio
-`sam_audio/model/base.py`의 `_from_pretrained`는 두 값을 필수로 받는다.
-또한 upstream의 `snapshot_download` 호출도 현재 Hub에서 제거된 두 인자를 쓴다.
-분리 모델 내부 `JudgeRanker`도 같은 로더를 직접 부르므로 단순한 외부 호출 수정으로
-전체 경로가 해결된다고 보장할 수 없다. 실제 GPU 호출로 관찰한 오류는 아니며,
-설치된 소스의 서명과 호출을 비교한 확정적 API 불일치다.
+Codex의 정적 리뷰가 찾은 차단 3건을 다음처럼 해결했다(Claude).
 
-외부 의존성 강제 핀·제약 덮어쓰기·monkeypatch·ranker 비활성화 없이 해결할 작고
-검증된 변경을 찾지 못했다. 사용자 지시대로 push·PR 생성 전에 중단한다.
-따라서 real 어댑터·이미지 정의는 구현되었으나 real 실행은 아직 준비 완료가 아니다.
+- `huggingface-hub` 2.4는 SAM Audio 로더가 쓰는 `proxies`, `resume_download`를 없앴다.
+  `gpu/`에 `huggingface-hub<1.0`을 직접 선언했다(우리 환경의 버전 선택이며, 남의 선언 제약을
+  덮어쓴 것이 아니다). 그 결과 transformers 4.57.6, hub 0.36.2로 풀린다.
+- PyPI의 torchcodec는 CUDA 13용이라 cu128 torch와 함께 로드되지 않는다. torchcodec를 cu128
+  인덱스에서 받고, 링크에 필요한 `nvidia-npp-cu12`를 추가한 뒤 이미지에서 `LD_LIBRARY_PATH`로 연다.
+- small 모델 58억 파라미터 중 ranker·span predictor가 약 44억이라 fp32로 24GB GPU를 넘는다.
+  재순위 후보 1개, 구간 예측 끔(기본값)일 때는 SAM Audio가 이 모듈들을 호출하지 않고 None/부재를
+  공식 처리하므로, 어댑터가 GPU로 옮기기 전에 뺀다.
 
 ### SAM Audio 실측 (2026-11-10)
 
-**pending measurement** — GPU·Docker 명령이 sandbox 실행 단계에서
-`bwrap: setting up uid map: Permission denied`로 차단되었다. 권한 우회 없이 중단했다.
-가중치를 다운로드하거나 복사하지 않았다.
+dnn5, RTX A5000 24GB, 드라이버 580.178.04, `facebook/sam-audio-small` + `facebook/sam-audio-judge`,
+`samples/sample.mp4`(7.1초), `HF_HUB_OFFLINE=1`.
 
 | 항목 | 결과 |
 |---|---|
-| GPU 0 최대 메모리 | pending measurement |
-| 10초 분리·Judge 처리 시간 / 각 모델 로딩 시간 | pending measurement |
-| torch / CUDA 런타임 | lock: 2.11.0+cu128 / cu128; 실행 확인 pending measurement |
-| 드라이버 | 대상 서버 570.124.06 (사용자 제공), 실행 확인 pending measurement |
-| main / sam-audio 이미지 크기 | pending measurement |
-| Judge 점수 범위 / 소스별 시도 횟수·통과 여부 | pending measurement |
-| judge_pass_threshold | 0.5 (예시 기본값 유지, 미보정) |
-| compose 업로드 → ready → render E2E | pending measurement |
+| 분리 모델 로딩 / 1회 분리 | 95초 / 6.5초 |
+| Judge 로딩 / 1회 판정 | 23초 / 3.6초 |
+| 최대 GPU 메모리 (분리+Judge 한 프로세스) | 13.4GB |
+| 도구별 GPU 메모리 (도구 서버 각각) | 분리 8.9GB, Judge 8.2GB |
+| torch / CUDA 런타임 | 2.11.0+cu128 / 12.8 |
+| Judge 점수 | overall 약 1.0~1.85, precision 약 4.5 (범위가 1~5로 보임) |
+| judge_pass_threshold | 0.5 (미보정, 이 범위에서는 모두 통과) |
+| E2E (도구 서버 2개 remote + main, stub 플래너) | ready, 소스 3개 모두 1회에 통과, render 200 |
+| main 이미지 | 881MB |
+| sam-audio 이미지 | 14.3GB |
+| compose E2E (dnn5: main + 분리 GPU0 + Judge GPU1 컨테이너) | ready, 소스 3개 모두 통과, render 200, stems 4개 |
 
-차단된 명령(모두 같은 bwrap 오류):
+sv3-a100의 `mrfakename/sam-audio-large-tv` 실측은 GPU를 다른 작업이 쓰고 있어 하지 않았다.
 
-```bash
-# 아래 GPU 명령 두 개의 공통 환경변수
-export HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 HF_HOME=/home/common/huggingface
-export AUDYSSEY_SAM_AUDIO_MODEL=mrfakename/sam-audio-large-tv
-export AUDYSSEY_SAM_AUDIO_JUDGE_MODEL=mrfakename/sam-audio-judge
-uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description 'a person speaking' --out work/sam-smoke-text
-uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description 'a person speaking' --span 0 3 --out work/sam-smoke-span
-docker compose config
-docker build -t audyssey-main:smoke -f docker/main.Dockerfile .
-docker build -t audyssey-sam-audio:smoke -f docker/sam-audio.Dockerfile .
-docker compose up -d
-```
-
-이미지 빌드가 차단되어 stub 컨테이너 `/api/jobs` 검증과 이미지 크기 측정도 대기 중이다.
+이미지 빌드에서 확인한 것:
+- 큰 git 의존성(sam-audio, perception_models, pytorchvideo) 중 하나가 새로 받는 도중 자주 끊긴다(sv3·dnn5 모두).
+  Dockerfile이 uv 캐시 마운트를 두고 `uv sync`를 최대 5회 재시도한다.
+- Judge는 실행 중 triton으로 GPU 커널을 컴파일하므로 이미지에 `gcc`, `libc6-dev`가 필요하다.
+- sv3-a100의 기본 Docker 빌드 엔진은 `/home/common/docker/buildkit/...` 경로 문제로 빌드가 실패한다(서버 설정).
 
 ## 14. 다음 단계 (승인 후)
 

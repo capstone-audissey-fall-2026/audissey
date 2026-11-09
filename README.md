@@ -50,16 +50,12 @@ uv run ty check --error-on-warning src/
 [설계](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md) · [구현 계획](docs/superpowers/plans/2026-11-09-audyssey-skeleton.md)
 
 
-## GPU 실행 차단 사항
+## GPU 실행 상태
 
-현재 `gpu/uv.lock`은 의존성 해결·설치에는 성공했지만 real 모델을 실행할 준비가
-완료된 상태는 아닙니다. 정적 리뷰에서 `huggingface-hub==2.4.0`의
-`ModelHubMixin.from_pretrained`가 고정 SAM Audio의 `_from_pretrained`에 필요한
-`proxies`, `resume_download`를 전달하지 않는 API 불일치를 확인했습니다.
-SAM Audio 내부 Judge ranker도 같은 로더를 사용하므로 직접 호출 두 곳만 바꾸는
-것으로는 해결이 보장되지 않습니다. 외부 제약 강제 핀, monkeypatch, ranker 비활성화는
-하지 않았습니다. 이 호환성 문제를 해결하기 전에는 아래 GPU 배포 절차를 완료된
-실행 가이드로 간주하지 마세요. GPU·Docker 실행 자체도 sandbox로 검증 대기입니다.
+dnn5(RTX A5000 24GB)에서 `facebook/sam-audio-small` 분리와 `facebook/sam-audio-judge`
+판정이 실제로 동작하는 것을 확인했습니다. 도구 서버 2개(GPU0·GPU1)와 main을 remote로
+연결한 E2E도 업로드 → ready → render까지 통과했습니다. 실측값은
+[설계 문서](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#sam-audio-실측-2026-11-10)에 있습니다.
 
 ## 한 GPU 서버에서 전부 띄우기 (sv3-a100 등 Docker 되는 서버)
 
@@ -135,6 +131,8 @@ SAM Audio 의존성의 numpy<2 조건 때문에 GPU 도구는 별도 Python 3.12
 
 ```bash
 uv sync --project gpu --locked
+# torchcodec(cu128)가 쓰는 NVIDIA NPP 경로. Docker 이미지는 이미 설정되어 있음
+export LD_LIBRARY_PATH="$PWD/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:${LD_LIBRARY_PATH:-}"
 export HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 HF_HOME=/home/common/huggingface
 export AUDYSSEY_SAM_AUDIO_MODEL=mrfakename/sam-audio-large-tv
 export AUDYSSEY_SAM_AUDIO_JUDGE_MODEL=mrfakename/sam-audio-judge
@@ -165,7 +163,12 @@ uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 
 ```
 
 스모크 스크립트는 로딩·분리·Judge 시간, 최대 GPU 메모리, torch/CUDA 버전, 판정과
-결과 WAV 경로를 JSON으로 출력합니다. [실측 대기 표와 차단 명령](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#sam-audio-실측-2026-11-10)에 현재 상태를 기록합니다.
+결과 WAV 경로를 JSON으로 출력합니다.
+
+24GB GPU에 올리기 위해 분리 어댑터는 재순위 후보가 1개이고 구간 예측을 끈 기본 설정에서
+쓰지 않는 ranker와 span predictor를 GPU에 올리지 않습니다(SAM Audio가 None을 공식 지원).
+`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES`를 2 이상으로, `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS`를
+`true`로 바꾸면 해당 모듈을 함께 올리며 메모리가 크게 늘어납니다(small 전체 fp32 약 23GB).
 
 ## 플래너를 Gemini/vLLM에 연결하기
 
