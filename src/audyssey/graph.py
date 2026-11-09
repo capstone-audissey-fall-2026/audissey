@@ -219,7 +219,16 @@ def analyze(job: Job, ctx: Context) -> Job:
             ),
             job.duration,
         )
-        job.sources = [Source(id=f"s{i}", plan=p) for i, p in enumerate(plans, 1)]
+        previous = {source.plan.name: source for source in job.sources}
+        sources = []
+        for i, plan_item in enumerate(plans, 1):
+            source = previous.get(plan_item.name)
+            if source is None:
+                source = Source(id=f"s{i}", plan=plan_item)
+            else:
+                source.id, source.plan = f"s{i}", plan_item
+            sources.append(source)
+        job.sources = sources
         update_step(
             job,
             ctx,

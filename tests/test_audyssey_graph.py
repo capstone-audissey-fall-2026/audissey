@@ -191,3 +191,19 @@ class GraphTests(unittest.TestCase):
                 job, Reseparate(source_id="s2", spans=[Span(start=0, end=4)]), self.ctx
             )
         self.assertEqual(job.model_dump_json(), snapshot)
+
+    def test_edit_during_planning_survives_replan(self):
+        original = self.ctx.tools.validate_plan
+
+        def validate(video, audio, plans):
+            if any(p.name == "ghost_sound" for p in plans):
+                graph.handle_command(self.job, Drop(source_id="s1"), self.ctx)
+                graph.handle_command(
+                    self.job, SetGain(source_id="s2", gain=0.5), self.ctx
+                )
+            return original(video, audio, plans)
+
+        self.ctx.tools = replace(self.ctx.tools, validate_plan=validate)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertFalse(job.sources[0].keep)
+        self.assertEqual(job.sources[1].gain, 0.5)
