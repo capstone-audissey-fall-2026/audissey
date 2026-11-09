@@ -1,0 +1,338 @@
+# Audyssey 뼈대(Skeleton) 설계 — Phase 1 최종안
+
+- 날짜: 2026-11-09
+- 작성: 광웅(gwpark0741), Claude와 논의
+- 상태: **구현 승인됨**. 2026-11-09 skeleton 구현 요청으로 승인.
+- 출처: "Agentic Audio Studio — 시스템 구현 명세서 (Draft v0.1)", 팀 모듈 역할 초안(§4), 2026-11-09 논의
+
+**표기**: 논의에서 합의한 결정은 표시하지 않는다. Claude가 정한 결정은 **(제안)**으로 표시한다. 바꾸고 싶으면 그 줄만 고치면 된다. 결정 전체 목록은 §12에 있다.
+
+---
+
+## 0. 한눈에 보기
+
+- 영상을 넣으면 **소리를 내는 개체별 트랙**으로 분리한다.
+- 사용자는 트랙을 듣고 남기거나 빼고, 음량과 피치를 조절한 뒤 다시 합친다.
+- 오케스트레이터는 **고정 흐름(LangGraph)**이다. 플래닝과 필터링에는 각각 **검증 루프**가 있다.
+- 모든 도구는 `stub`/`real`로 바꿔 끼울 수 있다. 기본값은 전부 `stub`이어서 GPU 없이 처음부터 끝까지 돈다.
+- 팀원은 `contracts.py`(공통 계약)를 지키면서 자기 도구 폴더만 고친다.
+- UI 디자인은 아직 정하지 않았다. 뼈대에는 흐름을 확인하는 **개발용 최소 화면**만 넣는다. UI의 경계는 HTTP API(§8)다.
+
+```
+업로드 → 전처리 → 플래닝 ⇄ 플래닝 검증 → [소스별] 분리 ⇄ 필터링 검증 → 나머지 계산 → 타임라인
+                                                   ↑                            │
+                                                   └── 다시 분리 · 소스 추가 ────┘ (해당 소스만)
+타임라인 편집(keep/drop/음량/피치) → 합치기 → 편집된 영상 + 멀티트랙 stems
+```
+
+## 1. 목적과 범위
+
+애니메이션 클립이나 웹에서 수집한 짧은 영상에서, **섞여 있는 오디오 중 원하는 소리만 조정하는 도구**를 만든다. **분리된 멀티트랙**과 **편집 후 다시 합친 결과**는 똑같이 중요한 결과물이다.
+
+이번 단계의 목표는 품질이 아니라 **처음부터 끝까지 동작하는 뼈대**다. 이 뼈대를 팀원에게 공유하고, 각자 맡은 모듈을 진짜 구현으로 바꿔 끼운다. 일정은 **오늘내일 안에 공유**하는 것이다.
+
+### 성공 기준
+1. 레포를 클론하고 README의 명령 몇 줄만 실행하면, GPU와 API 키 없이도 다음 흐름이 끝까지 돈다.
+   - `samples/sample.mp4` 업로드
+   - 단계별 진행 상태 확인(검증 루프의 회차 포함)
+   - 소스 트랙과 나머지 트랙 확인
+   - 편집(drop, 음량, 피치)
+   - 편집된 mp4와 stems 내보내기
+2. 팀원이 자기 도구 폴더만 고치고 설정을 `real`로 바꾸면, 다른 코드는 건드리지 않아도 전체 흐름이 그대로 돈다.
+3. 아무것도 바꾸지 않고 합치면 결과 오디오가 원본과 수치 오차 범위에서 같다. 이 성질은 자동 테스트로 확인한다.
+4. stub 모드 E2E 테스트에서 두 검증 루프가 각각 한 번 이상 실제로 돈다.
+
+### 목표가 아닌 것 (Phase 1)
+- 분리 품질 튜닝, 플래닝 정확도 개선
+- 소리 생성(새 오디오 합성). 명세서에 있지만 미룬다.
+- 자연어 편집 입력. 단, 이후에 붙일 수 있게 명령 구조는 지금 만든다(§7.2).
+- 30초를 넘는 영상과 오디오 청크 처리
+- 사용자 인증, 다중 사용자, DB, 작업 큐
+- 도구를 별도 서버로 분리하는 원격 호출 구조
+- 최종 UI 디자인(§9)
+
+### 실패로 간주할 것 (기술적으로 돌아가도)
+- 특정 서버(sv3-a100)의 경로나 계정이 있어야만 돌아가는 구조
+- 팀원이 자기 모듈을 테스트하려고 다른 모든 모델을 GPU에 올려야 하는 구조
+- 도구를 바꿀 때 오케스트레이터, API, UI 코드를 고쳐야 하는 구조
+
+## 2. 제약
+
+- **이식성이 최우선이다.**
+  - 광웅은 sv3-a100(A100 80GB 1~2장)을 쓰고, 팀원은 RunPod 같은 대여 GPU를 쓴다.
+  - 서버 고유 경로를 하드코딩하지 않는다. 모델 ID와 경로, API 주소, 키는 전부 환경변수로 받는다.
+  - 모델 가중치는 이미지나 레포에 넣지 않는다. `HF_HOME` 캐시를 쓴다.
+    - sv3-a100에서는 공용 캐시 `/home/common/huggingface`를 쓰고, 가중치를 복사하지 않는다.
+- **SAM Audio 접근**
+  - 공식 `facebook/sam-audio-*`는 HF 승인이 필요하다(SAM License).
+  - sv3-a100 공용 캐시에는 비공식 미러 `mrfakename/sam-audio-large-tv`(14GB)와 `mrfakename/sam-audio-judge`(7.9GB)가 있다.
+  - 모델 ID는 설정값이며, 기본값은 공식 ID다.
+- **입력은 10초 안팎의 영상이다.** **(제안)** 30초를 넘으면 업로드 단계에서 명확한 메시지와 함께 거절한다.
+- **기술 스택은 명세서를 따른다**: LangGraph, FastAPI, React, PyTorch, SAM Audio. LLM은 vLLM(OpenAI 호환) 또는 Gemini API를 쓴다.
+- **협업 규칙**
+  - 레포는 `capstone-audissey-fall-2026/audyssey`이고, main 브랜치는 보호돼 있다.
+  - main에 반영하려면 PR을 열고 CI(ruff lint/format, ty, unittest, 웹 빌드/테스트)를 통과해야 한다.
+
+## 3. 시스템 구조
+
+### 3.1 모듈과 담당
+
+| 모듈 | 역할 | 입력 → 출력 | 담당 |
+|---|---|---|---|
+| Orchestrator / API / UI | 흐름 실행, 명령 처리, 상태 전달, 편집 화면 | 명령·도구 결과 → 다음 행동 | 민정·영우·광웅 |
+| Source Planning Tool | 영상과 오디오에서 실제로 들리는 소리 개체와 분리 조건 추론, 프레임과 대조해 검증 | 비디오+오디오(+피드백) → 소스 목록 / 검증 문제 목록 | 도은 |
+| Source Separation Tool | 조건에 맞는 소스 분리 | 모노 오디오+조건 → 분리 트랙 | 기존 모델(SAM Audio) |
+| Filtering Tool | 다른 소리가 섞였는지, 빠진 소리가 있는지 판정, 불합격이면 재분리 조건 제안 | 원본+트랙+조건 → 평가 결과(+수정 제안) | 윤석 |
+| Audio Editing / Re-mixing | drop, 음량, 피치 적용과 재합성, 영상에 붙이기 | Job → 믹스·영상·stems | 미정(뼈대는 광웅) |
+
+### 3.2 오케스트레이션 방식
+- **MVP는 고정 흐름이다.** LangGraph StateGraph에 노드와 분기를 코드로 고정한다. LLM이 다음 단계를 고르지 않는다.
+- 자연어 입력은 나중에 **자연어를 명령 목록으로 번역하는 LLM 노드 하나**로 붙인다(혼합 방식). 오케스트레이터와 도구는 바꾸지 않는다.
+
+### 3.3 사용자 개입: 최소에서 시작
+- 업로드하면 타임라인 구성까지 자동으로 진행하고, 중간에 멈추지 않는다.
+- 사용자는 결과를 듣고 명령(§7.2)을 보낸다. 다시 분리와 소스 추가는 **해당 소스만** 다시 실행한다.
+- 개입 지점(예: 분리 전에 소스 목록을 확인하는 단계)은 필요하면 나중에 추가한다.
+
+## 4. 핵심 개념
+
+### 4.1 소스 = 소리를 내는 개체 하나
+- 같은 개체가 여러 번 소리를 내면 **소스 1개에 구간 여러 개**로 다룬다. 예: 칼 소리 5번 = 소스 1개.
+- 개체가 다르면 종류가 같아도 다른 소스다. 예: 캐릭터 A의 대사와 캐릭터 B의 대사.
+- 같은 개체를 더 잘게 쪼개지 않는다. 플래닝 프롬프트에 이 규칙을 명시하고, 오케스트레이터는 이름이 같은 소스를 합친다.
+- 분리 트랙은 소스당 **1개**이고, **원본과 길이가 같은 48kHz 모노**다.
+
+### 4.2 분리 조건
+- 텍스트는 필수다(SAM Audio `descriptions`).
+- 구간은 선택이다(positive span anchor).
+- 시각 힌트는 선택이다.
+- 같은 종류의 개체가 여럿이면 텍스트만으로는 구분하기 어렵다. 이때 구간과 시각 힌트가 개체를 구분하는 핵심이 된다.
+
+### 4.3 시각 힌트는 자동으로 만든다
+- 플래닝 도구가 화면에 보이는 소스마다 힌트를 만든다. 사용자가 클릭하지 않는다.
+  - 힌트 내용: 시점, 박스, 짧은 시각 설명
+- 분리 도구의 처리
+  - 힌트가 있으면 SAM3로 마스크 영상을 만들고, `masked_videos`와 `-tv` 모델로 분리한다.
+  - 힌트가 없으면 텍스트와 구간만 쓴다.
+- 화면 밖 소리(BGM, 내레이터)는 힌트가 없다.
+- 실제 구현은 **뼈대 이후의 첫 확장 기능**이다. 뼈대에는 필드만 있다.
+
+### 4.4 나머지 소리 (residual)
+- `residual = 원본 − Σ(소스 트랙)`을 "나머지" 트랙으로 둔다. 스테레오 원본이면 모노 소스를 각 채널에서 뺀다.
+- 아무것도 바꾸지 않고 합치면 **원본과 같다**. 소스 합에 나머지를 더하면 원본이 되기 때문이다.
+- 멀티트랙에는 깨끗한 소스 트랙을 보여 주고, 나머지는 별도 트랙으로 둔다.
+- 소스를 다시 분리하거나 추가할 때마다 나머지를 다시 계산한다.
+- **(제안)** 나머지 계산에서 빼는 대상은 트랙이 있는 모든 소스다. keep/drop과는 무관하다. 그래서 drop하면 그 소스만큼 정확히 빠진다. 분리에 실패해 트랙이 없는 소스는 빼지 않는다.
+- **(제안)** 나머지도 keep/drop과 gain을 가진다(pitch는 없음). 명령에서는 `source_id="residual"`로 가리킨다.
+- **알려진 한계**: 같은 소리가 두 소스에 중복으로 분리되면, 한쪽만 뺄 때 소리가 반만 빠지는 등의 아티팩트가 생긴다. 이 경우를 잡아내는 것이 필터링 도구의 역할이다.
+
+## 5. 검증 루프
+
+두 루프 모두 같은 구조다: **검증 → 실패 이유를 다음 시도에 피드백 → 횟수 한도**.
+
+| | 플래닝 검증 루프 (도은) | 필터링 검증 루프 (윤석) |
+|---|---|---|
+| 검증하는 것 | 계획한 소스를 실제 프레임과 텍스트에 대조한다. 구간 시점에 그 개체가 보이는지, 박스 위치와 설명이 맞는지 | 분리 트랙에 다른 소리가 섞였는지, 빠진 소리가 있는지(real 구현 후보: SAM Audio Judge) |
+| 실패 시 피드백 | `PlanIssue` 목록 → `plan(feedback=…)` | `FilterResult.reason` + `suggestion`(수정된 조건) |
+| 다시 실행 | 전체 소스 목록을 다시 플래닝 | 해당 소스만 재분리. suggestion이 없으면 같은 조건에 `attempt`를 1 올린다 |
+| 한도 **(제안)** | `AUDYSSEY_MAX_PLAN_ROUNDS=2` | `AUDYSSEY_MAX_SEPARATION_RETRIES=2` (소스당) |
+| 한도 도달 시 | 마지막 계획으로 진행. 남은 문제는 UI에 경고로 표시 | 마지막 트랙을 쓰고 `filter.passed=False`로 경고 표시. 쓸지 말지는 사용자가 keep/drop으로 정함 |
+
+- **(제안)** 형식 검사는 `validate_plan` 전에 오케스트레이터가 항상 먼저 한다. 구간이 영상 길이 안에 있는지, 이름이 겹치지 않는지, 텍스트가 비어 있지 않은지를 본다. 의미 검사는 `validate_plan`의 `real` 구현이 맡는다.
+- **(제안)** `separate`의 `real` 구현은 `attempt`가 올라갈수록 후보 수(`reranking_candidates`)를 늘리는 데 쓸 수 있다.
+- 루프 회차는 진행 상태에 드러난다(예: "플래닝 2/2", "소스 B 재분리 1/2"). 데모에서 "에이전트가 스스로 검증하고 고친다"는 모습이 보이는 부분이다.
+
+## 6. 데이터 계약
+
+모든 모듈이 공유하는 계약은 `src/audyssey/contracts.py` 한 파일에 Pydantic 모델로 둔다. 도구 담당자는 이 파일을 바꾸지 않고 구현만 바꾼다. 계약을 바꾸려면 PR로 팀 합의를 거친다.
+
+**공통 규칙**
+- 오디오는 파일 경로로 주고받는다. Job의 모든 경로는 job 폴더 기준 상대 경로다.
+- 시간은 초 단위 float다.
+- **(제안)** 중간 오디오 파일은 float32 wav로 저장한다.
+
+```
+Span         { start: float, end: float }
+VisualHint   { time: float, box: [x0, y0, x1, y1]  # 0~1 정규화
+               description: str }
+SourcePlan   { name: str,
+               kind: "dialogue" | "sfx" | "music" | "ambience",
+               description: str                  # 분리용 텍스트 조건
+               spans: list[Span],
+               visual_hint: VisualHint | None }
+PlanIssue    { source_name: str | None, kind: str, message: str }
+FilterResult { passed: bool, scores: dict[str, float], reason: str,
+               suggestion: SourcePlan | None }
+Source       { id: str, plan: SourcePlan, track_path: str | None,
+               filter: FilterResult | None,
+               status: "pending" | "running" | "done" | "failed",
+               attempts: int,
+               keep: bool = True, gain: float = 1.0, pitch_semitones: float = 0.0 }
+Residual     { path: str | None, keep: bool = True, gain: float = 1.0 }
+StepStatus   { key: str            # "preprocess" | "plan" | "validate_plan" | "separate:<id>" | "judge:<id>" | "residual" | "render"
+               status: "pending" | "running" | "done" | "failed" | "warning",
+               round: int, max_rounds: int, message: str }
+Job          { id: str, video_path: str, duration: float,
+               audio_path: str     # 48k, 원본 채널 유지 — residual·render 기준
+               mono_path: str      # 48k 모노 — separate·judge 입력
+               peaks_path: str     # 파형 표시용
+               sources: list[Source], residual: Residual,
+               plan_issues: list[PlanIssue],
+               steps: list[StepStatus],
+               outputs: RenderOutput | None,
+               state: "running" | "ready" | "failed", version: int,
+               error: str | None }
+RenderOutput { mix_wav: str, video_mp4: str, stems: list[str] }
+Command      = Keep | Drop | SetGain | SetPitch | Reseparate | AddSource | Render   # §7.2
+```
+
+## 7. 도구 인터페이스와 명령
+
+### 7.1 도구 함수
+각 도구는 함수 하나다. `stub`과 `real` 구현은 같은 시그니처를 가진다.
+
+```
+plan(video_path, audio_path, duration, feedback: list[PlanIssue]) -> list[SourcePlan]
+validate_plan(video_path, audio_path, plans: list[SourcePlan]) -> list[PlanIssue]     # 빈 목록 = 통과
+separate(mono_path, plan: SourcePlan, video_path, out_path, attempt: int) -> out_path
+judge(mono_path, track_path, plan: SourcePlan) -> FilterResult
+render(job: Job, job_dir, include_residual_stem: bool) -> RenderOutput
+```
+
+**stub 동작 (제안)**: stub도 진짜와 같은 형식의 결과를 돌려준다. 그리고 검증 루프가 실제로 한 번씩 돌게 만든다.
+- `plan`: 첫 계획은 ghost_sound 포함 4개, 피드백 후 3개의 고정 소스를 돌려준다. 이름, 구간, 텍스트가 다 채워져 있다.
+- `validate_plan`: ghost_로 시작하는 소스를 문제로 보고한다. plan은 피드백에서 지목한 소스를 제거하므로 기본 설정에서 두 번째 회차에 통과한다.
+- `separate`: 모노 원본에서 해당 구간만 남기고 나머지를 0으로 채운다. 원본과 길이가 같다.
+- `judge`: character_a의 설명이 " (refined)"로 끝나지 않으면 불합격이며 그 접미사를 붙인 suggestion을 돌려준다. 그 밖에는 합격이다.
+- `render`: stub이 없다. 처음부터 진짜 DSP로 만든다.
+
+**render 출력 (제안)**
+- `mix_wav`와 `video_mp4`: keep된 소스(gain, pitch 적용)와 keep된 나머지(gain 적용)를 합친 결과다.
+- 출력은 `job_dir/out/`에 저장한다.
+- `stems`: keep된 소스만 편집값을 적용해 각각 wav로 내보낸다. `include_residual_stem=True`면 나머지도 포함한다.
+- 편집 전 원본 분리 트랙은 항상 작업 폴더에 남는다.
+- pitch 변경은 길이를 유지해야 한다. 타임라인 정렬이 깨지면 안 되기 때문이다.
+
+### 7.2 명령
+버튼과, 나중에 붙일 자연어 번역기가 같은 형식의 명령을 만든다.
+
+```
+keep(source_id) / drop(source_id)                # "residual" 포함
+set_gain(source_id, gain)                         # 선형 0.0~2.0 (제안)
+set_pitch(source_id, semitones)                   # -12~+12 (제안), residual 불가
+reseparate(source_id, description?, spans?)       → 그 소스만 separate⇄judge 루프 → residual 재계산
+add_source(plan: SourcePlan)                      → 형식 검사 → 그 소스만 separate⇄judge 루프 → residual 재계산
+render(include_residual_stem)                     → RenderOutput
+```
+- keep, drop, gain, pitch는 상태 값만 바꾼다. 실제 적용은 render에서 한다.
+- 소스 삭제 명령은 없다. 원하지 않는 소스는 drop한다.
+
+## 8. API (UI와의 경계)
+
+UI 디자인은 정해지지 않았지만, UI가 기대는 것은 이 API뿐이다. 그래서 API를 먼저 고정한다. **(제안)**
+
+```
+POST /api/jobs                    multipart(video) → Job        # 업로드 + 자동 흐름 시작
+GET  /api/jobs                    → list[Job 요약]
+GET  /api/jobs/{id}               → Job
+GET  /api/jobs/{id}/events        SSE: Job 스냅샷 (상태가 바뀔 때마다)
+POST /api/jobs/{id}/commands      Command → Job | 409(실행 중) | 422(형식 오류)
+GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파일
+```
+
+## 9. UI — 미결정
+
+- 화면 구성, 상태 그래프의 모양, 타임라인 상호작용은 **UI 담당(민정·영우·광웅)이 따로 정한다**.
+- 뼈대에는 성공 기준 1을 확인하기 위한 **개발용 최소 화면**만 넣는다.
+  - 업로드
+  - 단계 상태 목록(회차와 경고 포함)
+  - 트랙 목록(재생, keep/drop, 음량, 피치, 텍스트 수정 후 재분리, 소스 추가)
+  - 합치기와 다운로드
+- 개발용 화면은 바뀌거나 버려질 수 있다. 바뀌지 않는 것은 API(§8)와 계약(§6)이다.
+- 개발용 화면은 `src/audyssey/devui/index.html` 한 장이며 vanilla JS를 사용한다. 빌드와 Node가 필요 없다. 기존 `web/`는 UI 담당이 최종 화면을 만들도록 그대로 둔다.
+
+## 10. 실행과 운영
+
+- **도구 선택**
+  - `AUDYSSEY_PLANNER`, `AUDYSSEY_SEPARATOR`, `AUDYSSEY_FILTER` 환경변수에 `stub` 또는 `real`을 넣는다. 기본값은 `stub`이다.
+  - `real`로 선택된 모델은 처음 쓰는 시점에 불러온다. 서버 시작 시 미리 불러오지 않는다.
+- **플래닝 real**: 기존 `model_manager` 방식을 쓴다. 설정으로 Gemini와 OpenAI 호환 주소(vLLM)를 고른다. 모델 선택은 도은 담당이다.
+- **전처리**: 길이를 검사하고, ffmpeg로 48kHz 원본 채널 오디오와 모노 오디오를 추출하고, 파형 피크를 만든다.
+- **시스템 요구사항**: stub 모드에는 Python(uv), ffmpeg/ffprobe가 필요하다. 개발용 화면에는 Node가 필요 없다. 기존 `web/` 개발에만 Node 20.19+ 또는 22.12+가 필요하다.
+- **저장 (제안)**: DB 없이 작업마다 폴더 하나(`work/jobs/<id>/`, `job.json` 포함)를 쓴다. 서버를 재시작해도 작업이 남는다.
+- **실패 처리 (제안)**
+  - 도구 예외가 나면 그 소스만 `failed`가 되고, 나머지 소스는 계속 진행한다.
+  - preprocess나 plan이 예외를 내면 Job 전체가 실패한다.
+  - 검증 루프 한도에 도달하는 것은 실패가 아니라 경고(§5)다.
+- **동시성 (제안)**
+  - Job마다 실행 잠금을 둔다.
+  - 실행 중에 reseparate, add_source, render가 오면 409로 거절한다.
+  - keep, drop, gain, pitch는 언제든 받는다.
+- **의존성 (제안)**
+  - 기본 설치에는 torch가 없다. 그래서 stub 모드는 노트북에서도 설치된다.
+  - real 도구용 의존성은 extras로 둔다: `[gpu]`(torch, sam-audio), `[llm]`(langchain-openai, langchain-google-genai).
+  - 기존 `server/`의 무거운 고정 의존성(flash-attn 휠 등)은 가져오지 않는다.
+- **Docker와 RunPod 가이드**: 뼈대 공유 직후 이어서 하는 작업이다.
+
+## 11. 코드 구조 (제안)
+
+```
+src/audyssey/
+  contracts.py        # §6 — 팀 공통 계약
+  settings.py         # AUDYSSEY_* (pydantic-settings)
+  graph.py            # LangGraph 흐름, 검증 루프, 명령 처리
+  store.py            # Job 상태 ↔ work/jobs/<id>/
+  api.py              # §8 API + 개발용 화면 정적 제공
+  cli.py              # `audyssey serve`
+  devui/index.html    # 빌드 없는 개발용 화면 (Node 불필요)
+  tools/
+    planning/   stub.py real.py     # 도은 (plan, validate_plan)
+    separation/ stub.py real.py     # SAM Audio
+    filtering/  stub.py real.py     # 윤석 (judge)
+    editing/    render.py           # DSP
+web/                  # UI 담당이 최종 UI 개발 시 사용
+tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
+```
+
+- 같은 레포에 새 패키지로 만든다. 기존 `src/v2a_inspect`, `server/`, `demo/` 등은 **뼈대가 동작한 뒤 별도 PR로 삭제**한다. 삭제 후에도 git 기록과 `legacy` 원격에 남는다.
+- **CI**: 기존 CI가 `src/` 전체에 lint, type 검사, unittest를 돌리므로 새 패키지도 자동으로 포함된다. 기존 테스트는 삭제 PR 전까지 계속 통과해야 한다.
+- **재사용**
+  - 그대로 쓰거나 일부 고쳐 쓴다: `llm/model_manager.py`, `observability/langfuse.py`(기본 URL 제거, 선택 기능), `preprocessing/video.py`(오디오 추출 추가), `audio_generation/mix.py`(render 참고), `ui/`의 SSE와 정적 제공 구조
+  - 버린다: SAM3 추적 툴 레이어(시각 힌트 단계에서 다시 검토), Hunyuan, Kokoro, `visualization/`, `demo/`, `.streamlit/`, `CODEX_HANDOFF.md`, 서버 시작 시 모델을 모두 미리 불러오는 구조
+
+## 12. 결정 기록
+
+**논의에서 합의한 것**
+1. 오케스트레이터는 고정 흐름으로 하고, 자연어는 나중에 명령 번역 노드로 붙인다.
+2. MVP 입력은 버튼과 슬라이더다. 단, 명령 형식은 자연어 번역을 대비해 만든다.
+3. 사용자 개입은 최소로 시작해서 필요한 만큼 늘린다. 다시 분리와 소스 추가는 해당 소스만 실행한다.
+4. 소스는 소리를 내는 개체 하나다. 같은 개체는 쪼개지 않고, 다른 개체(캐릭터 A와 B)는 따로 둔다.
+5. 시각 힌트(영역)는 플래닝 도구나 에이전트가 자동으로 만든다.
+6. 합치면 원본과 비슷하게 들려야 하고, 멀티트랙은 깨끗해야 한다. 그래서 나머지 트랙을 둔다.
+7. 플래닝과 필터링 모두 검증 루프를 둔다.
+8. 입력 영상은 10초 안팎이다.
+9. 생성 기능은 미룬다. 멀티트랙 결과와 합친 결과는 똑같이 중요하다.
+10. 특정 서버에 의존하지 않는다. 팀원은 RunPod에서 재현한다.
+11. sv3-a100에서는 SAM Audio 가중치를 공용 캐시 미러로 읽어 쓴다.
+12. UI는 아직 정하지 않았다.
+
+**Claude가 정한 것 (제안)**: 30초 상한, 루프 한도 2회, 형식 검사의 위치, 나머지 계산 규칙과 나머지의 keep/gain, stub의 루프 유발 동작, render 출력 규칙, 실패 처리, 동시성, 저장 방식, 의존성 분리, API 형식, 코드 구조, 기존 코드 삭제 시점.
+
+## 13. 미결정 / 확인 필요
+
+| 항목 | 누가, 언제 |
+|---|---|
+| UI 디자인 | UI 담당, 뼈대 공유 후 |
+| Audio Editing 담당자 | 팀 |
+| 플래닝 real 모델(Qwen3-VL / Qwen3-Omni / Gemini)과 프레임 검증 방법 | 도은 |
+| 필터링 합격 기준과 suggestion 생성 방법 | 윤석 |
+| SAM Audio 실측(GPU 메모리, 10초 처리 시간, torch 버전 호환성) | 광웅, separation real 작업 시 |
+| 팀원의 SAM Audio 공식 승인 또는 미러 사용 | 팀 |
+
+## 14. 다음 단계 (승인 후)
+
+1. 구현 계획 작성
+2. **뼈대 PR (오늘내일)**: 계약, stub 도구, LangGraph 흐름과 검증 루프, API, 개발용 화면, 테스트, README의 팀원 시작 가이드
+3. 각 담당자가 real 구현 착수. 광웅은 SAM Audio separation real과 Judge 연결 예시를 만든다.
+4. 기존 코드 삭제 PR, Docker와 RunPod 가이드
+5. 시각 힌트(SAM3), 자연어 명령 번역 노드

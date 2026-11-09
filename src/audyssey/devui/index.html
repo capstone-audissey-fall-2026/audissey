@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audyssey dev UI</title>
+<style>
+body {font: 16px system-ui; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #17212b; background: #f5f7fa}
+section, fieldset {background: white; padding: 1rem; margin: 1rem 0; border: 1px solid #ccd3db; border-radius: 6px}
+label {display: inline-flex; align-items: center; gap: .5rem; margin: .4rem}
+input, button, select {font: inherit; padding: .35rem} button {cursor: pointer}
+.warning {color: #805000} .failed, #error {color: #a01818} audio {display: block; width: 100%}
+video {max-width: 100%} a {display: inline-block; margin: .5rem} #error {white-space: pre-wrap}
+</style>
+<h1>Audyssey dev UI</h1>
+<p>개발용 화면 — 최종 UI 아님</p>
+<form id="upload"><label>영상 (최대 30초) <input name="file" type="file" accept="video/*" required></label><button>업로드</button></form>
+<p id="error" role="alert"></p>
+<p id="status" role="status"></p>
+<section aria-label="단계 상태"><h2>진행 상태</h2><ol id="steps"></ol></section>
+<section aria-label="오디오 트랙"><h2>트랙</h2><div id="tracks"></div></section>
+<form id="add"><fieldset><legend>소스 추가</legend>
+<label>이름 <input name="name" required></label>
+<label>종류 <select name="kind"><option>sfx</option><option>dialogue</option><option>music</option><option>ambience</option></select></label>
+<label>설명 <input name="description" required></label>
+<label>시작 (초) <input name="start" type="number" min="0" step="0.01" value="0" required></label>
+<label>끝 (초) <input name="end" type="number" min="0" step="0.01" value="1" required></label>
+<button>추가</button></fieldset></form>
+<label><input id="residual-stem" type="checkbox">나머지도 stem으로 내보내기</label>
+<button id="render" disabled>합치기</button>
+<section><h2>결과</h2><div id="outputs"></div></section>
+<script>
+let job, events;
+const $ = id => document.getElementById(id);
+function element(tag, text) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function label(text, input) {
+  const node = element('label', text); node.append(input); return node;
+}
+function fileUrl(path) { return `/api/jobs/${job.id}/files/${path.split('/').map(encodeURIComponent).join('/')}`; }
+async function request(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+  return data;
+}
+function fail(error) { $('error').textContent = error.message; }
+async function command(data) {
+  if (!job) return;
+  $('error').textContent = '';
+  try {
+    show(await request(`/api/jobs/${job.id}/commands`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}));
+  } catch (error) { fail(error); }
+}
+function slider(source, title, key, min, max, step, type, field) {
+  const input = element('input'); input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = source[key];
+  const value = element('output', input.value);
+  input.oninput = () => { value.textContent = input.value; };
+  input.onchange = () => command({type, source_id:source.id, [field]:Number(input.value)});
+  const wrapper = label(title, input); wrapper.append(value); return wrapper;
+}
+function track(source, residual = false) {
+  const row = element('fieldset');
+  row.append(element('legend', residual ? '나머지 (residual)' : `${source.id}: ${source.plan.name} (${source.plan.kind})`));
+  const path = residual ? source.path : source.track_path;
+  if (path) { const audio = element('audio'); audio.controls = true; audio.src = fileUrl(path); row.append(audio); }
+  if (!residual) {
+    row.append(element('p', `${source.status} · 시도 ${source.attempts}`));
+    if (source.filter && !source.filter.passed) { const warning = element('p', source.filter.reason); warning.className = 'warning'; row.append(warning); }
+  }
+  const keep = element('input'); keep.type = 'checkbox'; keep.checked = source.keep;
+  keep.onchange = () => command({type:keep.checked ? 'keep':'drop', source_id:source.id});
+  row.append(label('keep', keep), slider(source, '음량', 'gain', 0, 2, .05, 'set_gain', 'gain'));
+  if (!residual) {
+    row.append(slider(source, '피치 (반음)', 'pitch_semitones', -12, 12, 1, 'set_pitch', 'semitones'));
+    const description = element('input'); description.value = source.plan.description;
+    const retry = element('button', '다시 분리'); retry.type = 'button'; retry.disabled = job.state === 'running';
+    retry.onclick = () => command({type:'reseparate', source_id:source.id, description:description.value});
+    row.append(label('분리 설명', description), retry);
+  }
+  return row;
+}
+function show(data) {
+  if (job && data.id === job.id && data.version < job.version) return;
+  job = data;
+  $('status').textContent = `${job.id} · ${job.state} · ${job.duration.toFixed(2)}초`;
+  if (job.error) $('error').textContent = job.error;
+  $('steps').replaceChildren(...job.steps.map(step => {
+    const node = element('li', `${step.key}: ${step.status} ${step.round}/${step.max_rounds} ${step.message}`);
+    node.className = step.status; return node;
+  }));
+  $('tracks').replaceChildren(...job.sources.map(source => track(source)), track({...job.residual, id:'residual'}, true));
+  $('render').disabled = job.state !== 'ready';
+  $('add').querySelector('button').disabled = job.state !== 'ready';
+  $('outputs').replaceChildren();
+  if (job.outputs) {
+    const video = element('video'); video.controls = true; video.src = fileUrl(job.outputs.video_mp4); $('outputs').append(video);
+    for (const path of [job.outputs.video_mp4, job.outputs.mix_wav, ...job.outputs.stems]) {
+      const link = element('a', path); link.href = fileUrl(path); link.download = path.split('/').pop(); $('outputs').append(link);
+    }
+  }
+}
+$('upload').onsubmit = async event => {
+  event.preventDefault(); $('error').textContent = '';
+  try {
+    const data = await request('/api/jobs', {method:'POST', body:new FormData(event.target)});
+    if (events) events.close();
+    job = undefined; show(data);
+    events = new EventSource(`/api/jobs/${job.id}/events`);
+    events.onmessage = event => show(JSON.parse(event.data));
+    events.onerror = () => { $('status').textContent = '연결을 다시 시도하는 중…'; };
+  } catch (error) { fail(error); }
+};
+$('add').onsubmit = event => {
+  event.preventDefault();
+  if (!job) return;
+  const data = new FormData(event.target);
+  command({type:'add_source', plan:{name:data.get('name'), kind:data.get('kind'), description:data.get('description'), spans:[{start:Number(data.get('start')), end:Number(data.get('end'))}]}});
+};
+$('render').onclick = () => command({type:'render', include_residual_stem:$('residual-stem').checked});
+$('add').querySelector('button').disabled = true;
+</script>
+</html>
