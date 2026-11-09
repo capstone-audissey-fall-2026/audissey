@@ -16,6 +16,12 @@ class Tools:
 
 
 def load_tools(settings: Settings) -> Tools:
+    for mode, url, name in [
+        (settings.separator, settings.separator_url, "SEPARATOR"),
+        (settings.filter, settings.filter_url, "FILTER"),
+    ]:
+        if mode == "remote" and not url.strip():
+            raise ValueError(f"AUDYSSEY_{name}_URL is required for remote mode")
     planning = import_module(f"audyssey.tools.planning.{settings.planner}")
     separation = import_module(f"audyssey.tools.separation.{settings.separator}")
     filtering = import_module(f"audyssey.tools.filtering.{settings.filter}")
