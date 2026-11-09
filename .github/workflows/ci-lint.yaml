@@ -59,4 +59,4 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Test Python 3.12 with numpy 1.26
-        run: uv run --isolated --no-project --python 3.12 --with '.[ui,llm]' --with 'numpy==1.26.4' python -m unittest discover tests
+        run: uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 'numpy==1.26.4' python -m unittest discover tests
