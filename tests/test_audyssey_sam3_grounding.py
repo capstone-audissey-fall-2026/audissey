@@ -39,7 +39,7 @@ class Sam3GroundingTests(unittest.TestCase):
         patcher = patch.object(real, 'import_module', side_effect=import_module)
         patcher.start()
         self.addCleanup(patcher.stop)
-        env = patch.dict(os.environ, AUDYSSEY_SAM3_DEVICE='cuda:0', AUDYSSEY_SAM3_MODEL='facebook/sam3.1')
+        env = patch.dict(os.environ, AUDYSSEY_SAM3_DEVICE='cuda:0', AUDYSSEY_SAM3_MODEL='facebook/sam3.1', AUDYSSEY_SAM3_TRACK_FPS='0')
         env.start()
         self.addCleanup(env.stop)
         real._load.cache_clear()
@@ -84,6 +84,21 @@ class Sam3GroundingTests(unittest.TestCase):
         self.assertGreater(data[0, :, :80].max(), 0)
         self.assertGreater(data[-1, :, :80].max(), 0)
         self.assertEqual([c.kwargs['reverse'] for c in self.model.propagate_in_video.call_args_list], [False, True])
+
+    def test_mask_video_tracks_at_reduced_fps(self):
+        # SAM3 keeps per-frame state on the GPU; tracking a 1080p60 clip at full rate
+        # does not fit 24 GB, so the masked video is produced at AUDYSSEY_SAM3_TRACK_FPS.
+        self.model.init_state.side_effect = lambda **kwargs: {'num_frames': len(frames(Path(kwargs['resource_path'])))}
+        self.model.propagate_in_video.side_effect = lambda **kwargs: ((i, self.output()) for i in range(len(frames(Path(self.model.init_state.call_args.kwargs['resource_path'])))))
+        source_fps = video_info(self.video)['r_frame_rate']
+        with patch.dict(os.environ, AUDYSSEY_SAM3_TRACK_FPS='5'):
+            out = self.real.mask_video(self.video, self.hint, self.root / 'masks/low.mp4')
+        self.assertNotEqual(self.model.init_state.call_args.kwargs['resource_path'], str(self.video))
+        self.assertEqual(video_info(out)['r_frame_rate'], '5/1')
+        self.assertNotEqual(source_fps, '5/1')
+        data = frames(out)
+        self.assertTrue(np.all(data[:, :, 80:] == 0))
+        self.assertGreater(data[0, :, :80].max(), 0)
 
     def test_model_loaded_once(self):
         self.real.locate(self.video, self.hint)

@@ -134,6 +134,29 @@ def locate(video: Path, hint: VisualHint) -> GroundResult:
 
 
 def mask_video(video: Path, hint: VisualHint, out: Path) -> Path:
+    track_fps = Settings().sam3_track_fps
+    if track_fps:
+        with TemporaryDirectory() as tmp:
+            low = Path(tmp) / "track.mp4"
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-i", str(video), "-an"]
+                + [
+                    "-vf",
+                    f"fps={track_fps}",
+                    "-c:v",
+                    "libx264rgb",
+                    "-crf",
+                    "0",
+                    str(low),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            return _mask_video(low, hint, out)
+    return _mask_video(video, hint, out)
+
+
+def _mask_video(video: Path, hint: VisualHint, out: Path) -> Path:
     info = _video_info(video)
     fps = Fraction(info["r_frame_rate"])
     width, height = info["width"], info["height"]
