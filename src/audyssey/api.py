@@ -3,11 +3,11 @@ from tempfile import TemporaryDirectory
 from threading import Lock, Thread
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from audyssey.contracts import Job
-from audyssey.graph import Context, analyze
+from audyssey.contracts import AddSource, Job, Render, Reseparate, parse_command
+from audyssey.graph import Context, analyze, handle_command
 from audyssey.media import MediaError, check_upload
 from audyssey.settings import Settings
 from audyssey.store import JobStore
@@ -81,6 +81,29 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
                     yield f"data: {job.model_dump_json()}\n\n"
 
         return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.post("/api/jobs/{job_id}/commands")
+    def command(job_id: str, data: dict = Body(...)) -> Job:
+        snapshot = load(job_id)
+        try:
+            cmd = parse_command(data)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        # Share the live job so edits made during analysis survive later saves.
+        job = jobs.setdefault(job_id, snapshot)
+        lock = locks.setdefault(job_id, Lock())
+        execution = isinstance(cmd, (Reseparate, AddSource, Render))
+        if execution and not lock.acquire(blocking=False):
+            raise HTTPException(409, "job is busy")
+        try:
+            return handle_command(job, cmd, ctx).model_copy(deep=True)
+        except KeyError as exc:
+            raise HTTPException(404, "source not found") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        finally:
+            if execution:
+                lock.release()
 
     @app.get("/api/jobs/{job_id}/files/{path:path}")
     def get_file(job_id: str, path: str) -> FileResponse:

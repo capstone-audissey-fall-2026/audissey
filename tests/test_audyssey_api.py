@@ -83,7 +83,9 @@ class ApiTests(unittest.TestCase):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
-            server = uvicorn.Server(uvicorn.Config(self.app, log_level="error"))
+            server = uvicorn.Server(
+                uvicorn.Config(self.app, log_level="error", ws="none")
+            )
             thread = threading.Thread(
                 target=server.run, kwargs={"sockets": [listener]}, daemon=True
             )
@@ -106,3 +108,55 @@ class ApiTests(unittest.TestCase):
             finally:
                 server.should_exit = True
                 thread.join(timeout=5)
+
+    def command(self, job_id, data):
+        return self.client.post(f"/api/jobs/{job_id}/commands", json=data)
+
+    def test_command_render_and_download(self):
+        job = self.ready()
+        response = self.command(job["id"], {"type": "render"})
+        self.assertEqual(response.status_code, 200, response.text)
+        path = response.json()["outputs"]["video_mp4"]
+        download = self.client.get(f"/api/jobs/{job['id']}/files/{path}")
+        self.assertEqual(download.status_code, 200)
+        self.assertGreater(len(download.content), 0)
+
+    def test_command_conflict_while_busy(self):
+        job = self.ready()
+        with self.app.state.locks[job["id"]]:
+            response = self.command(
+                job["id"], {"type": "reseparate", "source_id": "s1"}
+            )
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["detail"], "job is busy")
+            response = self.command(
+                job["id"], {"type": "set_gain", "source_id": "s1", "gain": 0.5}
+            )
+            self.assertEqual(response.status_code, 200)
+        # A later execution must preserve the edit made while the job was busy.
+        response = self.command(job["id"], {"type": "reseparate", "source_id": "s2"})
+        self.assertEqual(response.json()["sources"][0]["gain"], 0.5)
+
+    def test_command_errors(self):
+        job = self.ready()
+        for data, status in [
+            ({"type": "unknown"}, 422),
+            ({"type": "drop", "source_id": "s99"}, 404),
+            (
+                {
+                    "type": "add_source",
+                    "plan": {
+                        "name": "bad",
+                        "kind": "sfx",
+                        "description": "sound",
+                        "spans": [{"start": 0, "end": 4}],
+                    },
+                },
+                422,
+            ),
+            ({"type": "set_pitch", "source_id": "residual", "semitones": 1}, 422),
+            ([], 422),
+        ]:
+            before = self.client.get(f"/api/jobs/{job['id']}").json()
+            self.assertEqual(self.command(job["id"], data).status_code, status)
+            self.assertEqual(self.client.get(f"/api/jobs/{job['id']}").json(), before)
