@@ -151,6 +151,8 @@ RunPod는 사용자가 별도로 미리 준비한 네트워크 볼륨 캐시를 
 `facebook/sam-audio-*`에는 HF 승인과 SAM License가 필요하고, 미러를 쓸 때도 사용
 권한을 확인해야 합니다. 체크포인트 외에 tokenizer·설정·보조 모델 캐시도 있어야 합니다.
 Judge의 고정 upstream은 `sam_audio` revision을 읽으므로 그 revision도 캐시에 필요합니다.
+미러(`mrfakename/sam-audio-judge`)를 쓸 때도 `sam_audio` 브랜치의 `checkpoint.pt`가 캐시에 있어야 합니다:
+`hf_hub_download('mrfakename/sam-audio-judge', 'checkpoint.pt', revision='sam_audio')`.
 이 작업에서는 가중치를 다운로드하거나 복사하지 않았습니다.
 
 SAM Audio 의존성의 numpy<2 조건 때문에 GPU 도구는 별도 Python 3.12 uv 프로젝트를
