@@ -21,11 +21,23 @@
 
 ### 1.1 처리 흐름
 
-```
-업로드 → 전처리 → 플래닝 ⇄ 플래닝 검증 → [소스별] (그라운딩 마스크) → 분리 ⇄ 필터링 검증 → 나머지 계산 → 타임라인
-                                                         ↑                                 │
-                                                         └──── 다시 분리 · 소스 추가 ────────┘ (해당 소스만)
-타임라인 편집(keep/drop/음량/피치) → 합치기(render) → 편집된 MP4 + mix WAV + stems
+```mermaid
+flowchart LR
+  UP["영상 업로드"] --> PRE["전처리<br/>48kHz 오디오 · 모노 · 파형"]
+  PRE --> PLAN["플래닝<br/>plan"]
+  PLAN --> CHECK{"플래닝 검증<br/>형식 · validate_plan · SAM3 locate"}
+  CHECK -- "문제 있음, 한도 전" --> PLAN
+  CHECK -- "통과 또는 한도 도달" --> SRC
+  subgraph SRC["소스마다"]
+    MASK["그라운딩 마스크<br/>시각 힌트가 있을 때"] --> SEP["분리<br/>separate"]
+    SEP --> JUDGE{"필터링 검증<br/>judge"}
+    JUDGE -- "불합격, 한도 전" --> SEP
+  end
+  SRC --> RES["나머지 계산<br/>residual"]
+  RES --> TL["타임라인"]
+  TL -- "keep · drop · 음량 · 피치" --> TL
+  TL -- "reseparate · add_source<br/>해당 소스만" --> SRC
+  TL -- "render" --> OUT["편집된 MP4<br/>mix WAV · stems"]
 ```
 
 - 오케스트레이터는 **고정 흐름의 LangGraph**입니다. LLM이 다음 단계를 고르지 않습니다.
@@ -34,14 +46,21 @@
 
 ### 1.2 서버 구성
 
-```
- 브라우저 ──HTTP──▶ main 서버 (audyssey serve, :8600, GPU 없음)
-                    │  LangGraph 흐름 · 명령 처리 · Job 저장 · 개발용 화면
-                    │
-                    ├─ OpenAI 호환 API ──▶ 플래너 LLM: Gemini API 또는 vLLM 서버
-                    │
-                    └─ HTTP + Bearer 토큰 ──▶ 도구 서버 (audyssey tool-server, :8700, GPU)
-                                               분리(SAM Audio) · 필터링(SAM Audio Judge) · 그라운딩(SAM3)
+```mermaid
+flowchart LR
+  UI["브라우저 / UI"] -- "HTTP :8600<br/>API · SSE" --> MAIN
+  subgraph MAIN["main 서버 · audyssey-app · GPU 없음"]
+    GRAPH["LangGraph 흐름<br/>명령 처리"] --- STORE[("work/jobs<br/>job.json")]
+  end
+  MAIN -- "OpenAI 호환 API" --> LLM["플래너 · 검증기 LLM<br/>Gemini 또는 vLLM"]
+  MAIN -- "HTTP + Bearer 토큰 :8700" --> TOOLS
+  subgraph TOOLS["도구 서버 · audyssey-tools · GPU"]
+    T1["분리<br/>SAM Audio"]
+    T2["필터링<br/>SAM Audio Judge"]
+    T3["그라운딩<br/>SAM3.1"]
+  end
+  TOOLS -. "읽기 전용 · 오프라인" .-> HF[("HF 캐시<br/>가중치")]
+  MAIN -. "LANGSMITH_*" .-> LS["LangSmith"]
 ```
 
 - **main 서버**는 흐름만 실행합니다. 모델은 모두 API로 부릅니다.
@@ -54,6 +73,20 @@
   - `audyssey-app`: main, Python 3.13
   - `audyssey-tools`: 도구 서버, CUDA 12.8, Python 3.12
 - Compose는 도구마다 컨테이너를 따로 띄웁니다. RunPod에서는 tools 이미지 하나로 Pod 하나에서 세 도구를 함께 띄웁니다.
+
+```mermaid
+flowchart TB
+  subgraph B["B. GPU 서버 한 대: docker compose up"]
+    B1["main"] --> B2["separation"]
+    B1 --> B3["judge"]
+    B1 --> B4["grounding"]
+    B1 --> B5["vllm"]
+  end
+  subgraph C["C. 노트북 + RunPod"]
+    C1["노트북: docker compose up main"] -- "HTTPS :8700" --> C2["RunPod Pod 1개<br/>tools 이미지 기본 CMD<br/>분리 · Judge · 그라운딩"]
+    C1 -- "OpenAI 호환 API" --> C3["Gemini API"]
+  end
+```
 
 ### 1.3 핵심 개념
 
@@ -185,7 +218,8 @@ docker compose up
 - main, separation, judge, grounding, vllm 다섯 컨테이너가 뜹니다. 호스트에는 main의 `127.0.0.1:8600`만 공개합니다.
 - GPU는 도구마다 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_VLLM_GPU`로 지정합니다.
   - 모두 같은 번호면 GPU 한 장을 나눠 씁니다.
-  - 한 장을 나눠 쓰면 vLLM 메모리 비율 `AUDYSSEY_VLLM_GPU_UTIL`을 낮춥니다. 80GB A100에서는 `0.2`로 확인했습니다.
+  - `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이며 vLLM 메모리 비율 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(80GB A100에서 확인).
+  - vLLM에 GPU를 따로 주면 이 값을 `0.85` 정도로 올립니다.
 - 가중치 캐시(`HF_CACHE`)는 컨테이너에 `/hf`로 읽기 전용 연결되며 오프라인(`HF_HUB_OFFLINE=1`)으로 읽습니다.
 - 작업은 `jobs` 볼륨에 남습니다.
 - 컨테이너는 root가 아닌 uid 10001로 실행합니다. 예전 root 이미지로 만든 볼륨은 쓰기 권한이 없으니 `docker volume rm audyssey_jobs` 후 다시 띄웁니다.
@@ -328,17 +362,40 @@ LANGSMITH_PROJECT=audyssey
 
 ### 2.7 가중치 준비
 
-가중치는 레포와 이미지에 넣지 않습니다. 서버는 다운로드하지 않고 `HF_HOME` 캐시만 오프라인으로 읽습니다.
+가중치는 레포와 이미지에 넣지 않습니다. 어떤 모델을 쓸지는 이미지가 아니라 환경변수(`.env` 또는 RunPod 템플릿)의
+모델 ID로 정하고, 서버는 다운로드하지 않고 `HF_HOME` 캐시만 오프라인으로 읽습니다. 그래서 캐시는 미리 받아 둡니다.
+
+**공식 모델을 씁니다.** 각자 Hugging Face에서 아래 공식 모델 페이지의 접근 승인(SAM License)을 받고,
+자기 토큰으로 캐시에 받습니다. `.env.example`의 모델 ID도 공식 ID입니다.
+
+```bash
+# 승인 받은 계정으로 로그인 (토큰은 커밋·공유하지 않음)
+uvx --from 'huggingface_hub[cli]<1.0' huggingface-cli login
+export HF_HOME=<가중치 캐시>   # RunPod: /workspace/huggingface (네트워크 볼륨)
+H="uvx --from huggingface_hub[cli]<1.0 huggingface-cli download"
+$H facebook/sam-audio-large-tv
+$H t5-base                                                   # SAM Audio 텍스트 인코더
+$H facebook/sam-audio-judge --revision sam_audio
+$H facebook/sam-audio-judge --include "*.json"               # Judge 토크나이저는 main에서 읽음
+$H facebook/sam3.1 config.json sam3.1_multiplex.pt
+# 후보 2개 이상(AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES>1)일 때만
+$H lukewys/laion_clap 630k-best.pt
+$H roberta-base; $H bert-base-uncased; $H facebook/bart-base
+# Compose 내부 vLLM 플래너를 쓸 때만
+$H Qwen/Qwen2.5-VL-3B-Instruct
+```
 
 | 모델 | 설정 | 캐시에 필요한 것 |
 |---|---|---|
-| 분리 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` (또는 미러 `mrfakename/sam-audio-large-tv`) |
-| 필터링 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge`의 `sam_audio` revision 체크포인트 **와** `main` revision의 `config.json`·`tokenizer*.json`·`special_tokens_map.json`(약 2MB). 미러도 `sam_audio` 브랜치의 `checkpoint.pt` 필요 |
-| 그라운딩 | `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1`의 `sam3.1_multiplex.pt` |
-| 후보 고르기(선택) | 후보 2개 이상일 때 | `lukewys/laion_clap`의 `630k-best.pt`와 `roberta-base`·`bert-base-uncased`·`facebook/bart-base` 토크나이저 |
-| 플래너(vLLM) | `AUDYSSEY_VLLM_MODEL` | `Qwen/Qwen2.5-VL-3B-Instruct` |
+| 분리 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv`, `t5-base` |
+| 필터링 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge`의 `sam_audio` revision 전체와 `main` revision의 JSON(설정·토크나이저, 약 2MB) |
+| 그라운딩 | `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1`의 `config.json`, `sam3.1_multiplex.pt` |
+| 후보 고르기(선택) | 후보 2개 이상 | `lukewys/laion_clap`의 `630k-best.pt`, `roberta-base`·`bert-base-uncased`·`facebook/bart-base` |
+| 플래너(선택) | `AUDYSSEY_VLLM_MODEL` | `Qwen/Qwen2.5-VL-3B-Instruct` |
 
-- 공식 `facebook/sam-audio-*`와 `facebook/sam3.1`은 Hugging Face 승인(SAM License)이 필요합니다. 미러를 쓸 때도 사용 권한을 확인합니다.
+- 승인을 기다리는 동안에는 비공식 미러 `mrfakename/sam-audio-large-tv`, `mrfakename/sam-audio-judge`를 모델 ID로 쓸 수 있습니다.
+  - 미러도 사용 권한을 확인해야 합니다.
+  - 미러 Judge는 `sam_audio` 브랜치의 `checkpoint.pt`가 캐시에 있어야 합니다.
 - sv3-a100 공용 캐시 `/home/common/huggingface`에는 위 공식 모델과 미러가 모두 있습니다. 가중치를 복사하지 말고 이 경로를 그대로 연결합니다.
 
 ### 2.8 설정 (환경변수)
@@ -500,10 +557,7 @@ env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resol
 
 **인프라·배포**
 - RunPod 템플릿을 실제 Pod에서 검증하지 않았습니다. 필요한 VRAM은 sv3 측정에서 추정한 값입니다.
-- RunPod 볼륨에 받을 보조 캐시 전체 목록(토크나이저 등)이 정리되지 않았습니다.
-- `.env.example`의 기본값 두 가지가 맞지 않을 수 있습니다.
-  - 모델 ID가 미러입니다.
-  - `AUDYSSEY_VLLM_GPU_UTIL=0.85`라 GPU 한 장을 나눠 쓰면 다른 도구가 메모리 부족으로 실패합니다. 한 장일 때는 직접 낮춥니다.
+- 2.7의 다운로드 목록은 sv3에서 그 목록만 담은 캐시로 확인했지만, 빈 RunPod 볼륨에 처음부터 받아 보지는 않았습니다.
 - GPU 이미지 빌드는 큰 git 의존성 다운로드가 자주 끊겨 5회 재시도합니다.
 - CI 필수 검사는 `lint-and-format-check` 하나입니다(`numpy-1x`는 필수 아님). GPU 실측은 CI에 없습니다.
 
