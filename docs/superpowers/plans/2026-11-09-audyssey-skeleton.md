@@ -267,7 +267,7 @@ tests/
   - `tools.load_tools(settings: Settings) -> Tools`
     - 모듈마다 `importlib.import_module(f"audyssey.tools.{module}.{mode}")`로 불러온다.
     - real 모듈은 선택된 경우에만 import된다.
-- `real.py` 세 파일은 같은 이름의 함수를 정의한다. 본문은 `raise NotImplementedError("<담당자>: see docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md §7.1")`이다. 담당자는 planning=도은, separation=SAM Audio, filtering=윤석이다.
+- `real.py` 세 파일은 같은 이름의 함수를 정의한다. 본문은 `raise NotImplementedError("<담당자>: see docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md §7.1")`이다. 담당자는 planning=플래닝 담당, separation=SAM Audio, filtering=필터링 담당이다.
 - **stub 동작.** 상태를 저장하지 않고, 입력만 보고 결정한다. d는 duration이다.
   - `plan(feedback=[])` → 소스 4개
     - `character_a`(dialogue, spans [0, 0.3d])

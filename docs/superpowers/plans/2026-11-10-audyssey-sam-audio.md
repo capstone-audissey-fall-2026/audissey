@@ -161,7 +161,7 @@
   - `passed`: `overall >= settings.judge_pass_threshold`
   - `reason`: 실패하면 `f"judge overall {x:.2f} < {threshold}"`
   - `suggestion`: `None`
-- 모듈 docstring에 "윤석 담당 모듈의 예시 구현. 기준과 구현은 교체 가능"이라고 적는다.
+- 모듈 docstring에 "필터링 담당 담당 모듈의 예시 구현. 기준과 구현은 교체 가능"이라고 적는다.
 
 - [ ] **Step 1: 실패하는 테스트** (가짜 모듈 사용)
   - `test_judge_maps_scores_and_threshold`: overall 0.7, 기준 0.5 → 통과. overall 0.3 → 실패이고 reason에 `0.30`이 들어간다.
