@@ -1,8 +1,167 @@
-# Audyssey skeleton
+# Audyssey
 
-GPU와 API 키 없이 영상 업로드 → 플래닝·필터링 검증 루프 → 소스 트랙과 나머지 → 편집 → 영상과 stems 내보내기를 실행합니다. 기본 도구는 모두 stub이며 분리 품질을 평가하는 구현은 아닙니다.
+짧은 영상(10초 안팎)의 오디오를 **소리를 내는 개체별 트랙**으로 나누고, 트랙을 듣고 남기거나 빼고
+음량·피치를 바꾼 뒤 다시 합쳐 **편집된 영상과 멀티트랙 stems**를 내보내는 도구입니다.
 
-요구사항: Python 3.11+, [uv](https://docs.astral.sh/uv/), `ffmpeg`/`ffprobe` (PATH에 설치). 개발용 화면에는 Node가 필요 없습니다.
+지금은 **뼈대(skeleton) 단계**입니다. 모든 모듈이 실제 모델로 서버 사이 API를 통해 끝까지 도는 것을
+확인했지만, 각 모듈의 품질은 아직 연결 확인 수준입니다. 각 담당자가 자기 모듈을 교체해 나갑니다.
+
+- [1. 설계 요약](#1-설계-요약)
+- [2. 실행 방법 (환경·경우별)](#2-실행-방법-환경경우별)
+- [3. 팀 작업 규칙과 CI/CD](#3-팀-작업-규칙과-cicd)
+- [4. 모듈별 담당 작업](#4-모듈별-담당-작업)
+- [5. 모듈별 현재 미흡한 점](#5-모듈별-현재-미흡한-점)
+- [6. 실측 기록](#6-실측-기록)
+
+전체 설계 명세서: [docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md)
+
+---
+
+## 1. 설계 요약
+
+### 1.1 처리 흐름
+
+```
+업로드 → 전처리 → 플래닝 ⇄ 플래닝 검증 → [소스별] (그라운딩 마스크) → 분리 ⇄ 필터링 검증 → 나머지 계산 → 타임라인
+                                                         ↑                                 │
+                                                         └──── 다시 분리 · 소스 추가 ────────┘ (해당 소스만)
+타임라인 편집(keep/drop/음량/피치) → 합치기(render) → 편집된 MP4 + mix WAV + stems
+```
+
+- 오케스트레이터는 **고정 흐름의 LangGraph**입니다. LLM이 다음 단계를 고르지 않습니다.
+- 업로드하면 타임라인까지 멈추지 않고 진행하고, 그 뒤 사용자가 **명령**으로 편집합니다.
+- 플래닝과 필터링에는 각각 **검증 루프**가 있습니다(1.4).
+
+### 1.2 서버 구성
+
+```
+ 브라우저 ──HTTP──▶ main 서버 (audyssey serve, :8600, GPU 없음)
+                    │  LangGraph 흐름 · 명령 처리 · Job 저장 · 개발용 화면
+                    │
+                    ├─ OpenAI 호환 API ──▶ 플래너 LLM: Gemini API 또는 vLLM 서버
+                    │
+                    └─ HTTP + Bearer 토큰 ──▶ 도구 서버 (audyssey tool-server, :8700, GPU)
+                                               분리(SAM Audio) · 필터링(SAM Audio Judge) · 그라운딩(SAM3)
+```
+
+- **main 서버**는 흐름만 실행합니다. 모델은 모두 API로 부릅니다.
+- **도구 서버**는 HTTP 창구가 없는 SAM 계열 모델을 감쌉니다. 도구마다 `stub`/`real`/`remote`를 고를 수 있습니다.
+  - `stub`: GPU 없이 형식만 맞춘 가짜 결과
+  - `real`: 같은 프로세스에서 모델 실행
+  - `remote`: 다른 서버의 도구 서버를 HTTP로 호출
+- **플래너·검증기 LLM**은 OpenAI 호환 주소만 바꾸면 Gemini와 직접 띄운 vLLM 사이를 오갈 수 있습니다.
+- 이미지는 설치 환경별로 두 개입니다.
+  - `audyssey-app`: main, Python 3.13
+  - `audyssey-tools`: 도구 서버, CUDA 12.8, Python 3.12
+- Compose는 도구마다 컨테이너를 따로 띄웁니다. RunPod에서는 tools 이미지 하나로 Pod 하나에서 세 도구를 함께 띄웁니다.
+
+### 1.3 핵심 개념
+
+| 개념 | 정의 |
+|---|---|
+| 소스 | 소리를 내는 개체 하나. 같은 개체가 여러 번 소리를 내면 소스 1개에 구간 여러 개. 다른 개체는 종류가 같아도 다른 소스 |
+| 분리 조건 | 텍스트(필수), 구간 span(선택), 시각 힌트(선택: 시점·0~1 정규화 박스·설명) |
+| 시각 힌트 | 플래너가 화면에 보이는 소스마다 자동 생성. SAM3가 위치를 확인하고 대상 밖을 검게 칠한 마스크 영상을 만들어 분리에 사용 |
+| 분리 트랙 | 소스당 1개, 원본과 길이가 같은 48kHz mono float32 WAV |
+| 나머지(residual) | `원본 − Σ(소스 트랙)`. 아무것도 바꾸지 않고 합치면 원본과 같음. `source_id="residual"`로 keep/drop/gain 가능 |
+
+### 1.4 검증 루프
+
+| | 플래닝 검증 루프 | 필터링 검증 루프 |
+|---|---|---|
+| 검증 | 형식 검사(오케스트레이터) → `validate_plan` → 시각 힌트마다 SAM3 `locate` | `judge`가 분리 트랙을 평가 |
+| 실패 시 | `PlanIssue` 목록을 `plan(feedback=…)`에 전달해 전체를 다시 계획 | `suggestion`이 있으면 그 조건으로, 없으면 `attempt`+1로 해당 소스만 재분리 |
+| 한도 | `AUDYSSEY_MAX_PLAN_ROUNDS=2` | `AUDYSSEY_MAX_SEPARATION_RETRIES=2` (총 3회) |
+| 한도 도달 | 마지막 계획으로 진행, 경고 표시 | 마지막 트랙 사용, `filter.passed=False` 경고 |
+
+### 1.5 계약·도구 함수·명령·API
+
+모든 모듈이 공유하는 데이터 형식은 [`src/audyssey/contracts.py`](src/audyssey/contracts.py)의 Pydantic 모델입니다.
+주요 모델은 `SourcePlan`, `VisualHint`, `PlanIssue`, `FilterResult`, `GroundResult`, `Job`, `Command`입니다.
+오디오는 파일 경로로 주고받고, 시간은 초 단위 float입니다.
+
+도구 함수는 `stub`/`real`/`remote`가 모두 같은 시그니처입니다.
+
+```python
+plan(video_path, audio_path, duration, feedback: list[PlanIssue]) -> list[SourcePlan]
+validate_plan(video_path, audio_path, plans: list[SourcePlan]) -> list[PlanIssue]  # 빈 목록 = 통과
+separate(mono_path, plan: SourcePlan, video_path, out_path, attempt: int) -> out_path
+judge(mono_path, track_path, plan: SourcePlan) -> FilterResult
+locate(video: Path, hint: VisualHint) -> GroundResult
+mask_video(video: Path, hint: VisualHint, out: Path) -> Path
+render(job: Job, job_dir, include_residual_stem: bool) -> RenderOutput
+```
+
+사용자 작업의 상태 변경은 **모두 명령**(`graph.handle_command`)으로 합니다. 버튼, 나중에 붙일 자연어 번역기,
+에이전트가 같은 명령을 쓰기 위한 필수 원칙입니다.
+
+```
+keep / drop(source_id)            set_gain(source_id, 0.0~2.0)     set_pitch(source_id, -12~+12)
+reseparate(source_id, description?, spans?)   add_source(plan)     render(include_residual_stem)
+```
+
+UI가 기대는 것은 아래 API뿐입니다.
+
+```
+POST /api/jobs                    multipart(video) → Job (업로드 + 자동 흐름 시작)
+GET  /api/jobs                    → Job 요약 목록
+GET  /api/jobs/{id}               → Job
+GET  /api/jobs/{id}/events        SSE: 상태가 바뀔 때마다 Job 스냅샷
+POST /api/jobs/{id}/commands      Command → Job | 409(실행 중) | 422(형식 오류)
+GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파일
+```
+
+도구 서버 API는 다음과 같습니다.
+
+```
+GET  /health                                    인증 없음
+POST /separate  multipart mono, video, plan, attempt        → WAV
+POST /judge     multipart mono, track, plan                  → FilterResult
+POST /locate    multipart video, hint                        → GroundResult
+POST /mask      multipart video, hint                        → MP4
+```
+
+`/health`를 뺀 요청에는 `Authorization: Bearer $AUDYSSEY_TOOL_TOKEN`이 필요합니다.
+
+### 1.6 코드 구조
+
+```
+src/audyssey/
+  contracts.py   팀 공통 계약 (변경은 PR로 합의)
+  settings.py    AUDYSSEY_* 환경변수 (pydantic-settings)
+  graph.py       LangGraph 흐름, 검증 루프, 명령 처리
+  store.py       Job ↔ work/jobs/<id>/job.json
+  api.py         HTTP API + 개발용 화면
+  toolserver.py  도구 서버
+  cli.py         audyssey serve | audyssey tool-server
+  media.py       ffmpeg 추출·프레임·WAV 입출력
+  devui/         빌드 없는 개발용 화면 (최종 UI 아님)
+  tools/
+    planning/    stub.py real.py llm.py      plan, validate_plan
+    separation/  stub.py real.py remote.py   separate (SAM Audio)
+    filtering/   stub.py real.py remote.py   judge (SAM Audio Judge)
+    grounding/   stub.py real.py remote.py   locate, mask_video (SAM3)
+    editing/     render.py                   residual, pitch, render
+gpu/             GPU 도구 전용 uv 프로젝트 (Python 3.12, numpy 1.26, torch cu128)
+docker/          app.Dockerfile, tools.Dockerfile
+compose.yaml     main + separation + judge + grounding + vllm
+tests/           unittest (GPU 코드는 가짜 torch/sam_audio로 검사)
+```
+
+---
+
+## 2. 실행 방법 (환경·경우별)
+
+| 경우 | 필요한 것 | 바로 가기 |
+|---|---|---|
+| A. GPU 없이 흐름만 확인 | Python 3.11+, uv, ffmpeg | [2.1](#21-a-gpu-없이-노트북에서-stub) |
+| B. GPU 서버 한 대에서 전부 | Docker, NVIDIA Container Toolkit, 가중치 캐시 | [2.2](#22-b-gpu-서버-한-대에서-전부-docker-compose) |
+| C. 노트북 + 대여 GPU(RunPod) | 노트북 Docker, RunPod Pod 1개 | [2.3](#23-c-노트북--runpod-gpu) |
+| D. 내 모듈만 GPU로 개발 | GPU, `gpu/` 환경 | [2.4](#24-d-내-모듈만-gpu로-개발) |
+| 플래너를 Gemini/vLLM으로 | API 키 또는 vLLM | [2.5](#25-플래너를-gemini-또는-vllm으로) |
+| LangSmith로 보기 | LangSmith 키 | [2.6](#26-langsmith-모니터링) |
+
+### 2.1 A. GPU 없이 노트북에서 (stub)
 
 ```bash
 uv sync --extra ui
@@ -10,134 +169,58 @@ uv run audyssey serve
 # http://127.0.0.1:8600 에서 samples/sample.mp4 업로드
 ```
 
-개발용 화면에서 트랙을 재생하고 keep/drop, 음량, 피치를 조절합니다. 설명을 바꾸어 해당 소스만 다시 분리하거나 소스를 추가할 수 있습니다. 합치기는 편집된 MP4, mix WAV, keep된 소스의 stems를 만듭니다. 나머지 stem은 선택 사항입니다. 편집 없이 합친 WAV는 원본 추출 오디오와 수치 오차 범위에서 같습니다. AAC 영상 오디오는 손실 압축됩니다.
+모든 도구가 stub이며 두 검증 루프가 한 번씩 돕니다. 개발용 화면에서 재생, keep/drop, 음량, 피치,
+설명 수정 후 재분리, 소스 추가, 합치기를 해 볼 수 있습니다. 편집 없이 합친 WAV는 원본과 수치 오차 범위에서 같습니다.
+
+### 2.2 B. GPU 서버 한 대에서 전부 (Docker Compose)
 
 ```bash
-uv sync --dev --extra ui --extra llm
-uv run python -m unittest discover tests
-uv run ruff check src/
-uv run ruff format --check src/
-uv run ty check --error-on-warning src/
-```
-
-| 환경변수 | 기본값 | 의미 |
-|---|---|---|
-| `AUDYSSEY_PLANNER` | `stub` | `stub` 또는 `real` |
-| `AUDYSSEY_SEPARATOR` | `stub` | `stub`, `real`, `remote` |
-| `AUDYSSEY_FILTER` | `stub` | `stub`, `real`, `remote` |
-| `AUDYSSEY_GROUNDER` | `stub` | `stub`, `real`, `remote` |
-| `AUDYSSEY_GROUNDING_URL` | 빈 문자열 | remote 그라운딩 도구 서버 주소 |
-| `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1` | 기존 캐시의 SAM3.1 모델 ID |
-| `AUDYSSEY_SAM3_DEVICE` | `cuda` | SAM3 CUDA 장치 (`cuda:0` 등) |
-| `AUDYSSEY_PLANNER_FRAMES` | `4` | 플래너·검증기 JPEG 프레임 수 (1~16) |
-| `AUDYSSEY_MAX_PLAN_ROUNDS` | `2` | 플래닝 최대 회차 (1 이상) |
-| `AUDYSSEY_MAX_SEPARATION_RETRIES` | `2` | 재분리 횟수, 총 시도 최대 3회 |
-| `AUDYSSEY_MAX_DURATION_S` | `30` | 업로드 영상 길이 상한 |
-| `AUDYSSEY_WORK_DIR` | `work/jobs` | 작업 폴더 위치 |
-| `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` | 분리 모델 ID |
-| `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge` | 필터링 모델 ID |
-| `AUDYSSEY_SAM_AUDIO_DEVICE` | `cuda` | 모델 장치 |
-| `AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES` | `1` | 분리 후보 수 (1 이상). 2 이상이면 후보를 여러 개 만들고 ranker로 하나를 고름 |
-| `AUDYSSEY_SAM_AUDIO_CLAP_CHECKPOINT` | 빈 값 | 후보 고르기용 CLAP 체크포인트. 빈 값이면 캐시의 `lukewys/laion_clap` 630k-best |
-| `AUDYSSEY_SAM_AUDIO_IMAGEBIND_CHECKPOINT` | 빈 값 | 시각 힌트 후보 고르기용 ImageBind 체크포인트. 빈 값이면 끔 |
-| `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS` | `false` | span이 없을 때 모델의 span 예측 |
-| `AUDYSSEY_JUDGE_PASS_THRESHOLD` | `0.5` | Judge 예시 기준, 아직 실측 보정 전 |
-
-설정은 환경변수로만 읽으며 `.env`는 읽지 않습니다. 작업은 `<WORK_DIR>/<id>/job.json`과 상대 경로 파일로 보존됩니다. 서버 재시작 후 `GET /api/jobs`와 `GET /api/jobs/{id}`로 다시 조회할 수 있습니다. 단일 서버 프로세스로 실행합니다. 실행 중 재분리·추가·합치기는 409를 반환하며 keep/drop과 음량·피치 변경은 허용합니다.
-
-팀원은 담당 `src/audyssey/tools/<모듈>/real.py`의 동일 시그니처 함수를 구현하고 `AUDYSSEY_PLANNER=real`, `AUDYSSEY_SEPARATOR=real`, `AUDYSSEY_FILTER=real` 중 해당 값을 설정합니다. 분리는 SAM Audio, 필터링은 SAM Audio Judge 예시로 구현되어 있습니다. 플래닝 real은 연결 확인용 LLM 기본 구현이며 도은 담당자가 교체할 수 있습니다.
-
-- 도은: `planning/real.py`의 `plan`, `validate_plan`
-- SAM Audio 담당: `separation/real.py`의 `separate`
-- 윤석: `filtering/real.py`의 `judge`
-- UI 담당: 최종 UI를 결정합니다. 이전 `web/` React UI는 삭제되었고 git 기록과 `legacy` 원격에 남아 있습니다.
-
-공통 계약 `contracts.py` 변경은 PR로 합의합니다. 이전 `v2a_inspect` 코드는 삭제되었고 git 기록과 `legacy` 원격에 남아 있습니다. 모델은 필요할 때 로드하고 가중치는 `HF_HOME` 캐시를 사용합니다. 뼈대 실행에는 모델 다운로드가 없습니다. 도구 교체 시 API와 오케스트레이터를 수정하지 않습니다.
-
-[설계](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md) · [구현 계획](docs/superpowers/plans/2026-11-09-audyssey-skeleton.md)
-
-
-## GPU 실행 상태
-
-dnn5(RTX A5000 24GB × 4)에서 모든 모듈을 real로 연결한 E2E를 확인했습니다.
-`docker compose up` 한 번으로 main, 분리, Judge, SAM3, vLLM 컨테이너 5개가 뜨고,
-샘플 업로드 → 플래닝·검증 루프 → 분리·판정 → render까지 306초에 끝났습니다.
-Gemini 플래너와 높인 Judge 기준으로는 시각 힌트 마스크 분리와 재분리 루프까지 확인했습니다.
-sv3-a100에서는 공식 large-tv·Judge·SAM3.1과 vLLM 다섯 컨테이너를 A100 80GB 한 장에 올리고
-분리 후보 4개(`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES=4`, `AUDYSSEY_VLLM_GPU_UTIL=0.2`)로
-201초에 render까지 끝났습니다. GPU 메모리 최대 69.1GB입니다.
-실측값과 알려진 한계는
-[설계 문서](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#전체-e2e-실측-2026-11-10-dnn5-rtx-a5000-24gb--4)에 있습니다.
-
-## 한 GPU 서버에서 전부 띄우기 (sv3-a100 등 Docker 되는 서버)
-
-NVIDIA Container Toolkit과 Docker Compose가 설치된 서버에서 실행합니다.
-
-```bash
-cp .env.example .env
-# .env의 AUDYSSEY_TOOL_TOKEN을 임의의 긴 토큰으로 교체
-# sv3-a100: HF_CACHE=/home/common/huggingface, AUDYSSEY_SEPARATION_GPU·AUDYSSEY_JUDGE_GPU·AUDYSSEY_GROUNDING_GPU로 GPU 지정
+cp .env.example .env      # .env는 커밋하지 않음
+# .env에서 AUDYSSEY_TOOL_TOKEN을 긴 임의 값으로, HF_CACHE를 가중치 캐시 경로로 바꿈
+docker compose pull       # 또는 직접 빌드: docker compose build
 docker compose up
-# http://localhost:8600 에서 samples/sample.mp4 업로드
+# http://localhost:8600 (원격 서버라면 SSH 터널: ssh -L 8600:localhost:8600 <서버>)
 ```
 
-main, separation, judge, grounding, vllm 다섯 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
-연결되며 GPU 도구 포트는 호스트에 공개하지 않습니다. 원격 서버 UI는 SSH 터널로
-연결합니다. 작업은 `jobs` 볼륨에 남습니다. 모든 컨테이너는 root가 아닌 uid 10001로 실행합니다.
-이전 root 이미지로 만든 `jobs` 볼륨은 쓰기 권한이 없으므로 `docker volume rm audyssey_jobs` 후 다시 만듭니다. Compose 플래너는 기본 real이며 내부 `http://vllm:8000/v1`로
-연결합니다. Python 직접 실행의 기본값은 계속 stub입니다. vLLM은
-`Qwen/Qwen2.5-VL-3B-Instruct` 캐시를 미리 준비해야 하며 GPU 기본값은 0,
-메모리 사용 비율은 0.85입니다. 다른 GPU 도구와 함께 실행할 때는
-`AUDYSSEY_VLLM_GPU`와 메모리 여유를 조정합니다.
+- main, separation, judge, grounding, vllm 다섯 컨테이너가 뜹니다. 호스트에는 main의 `127.0.0.1:8600`만 공개합니다.
+- GPU는 도구마다 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_VLLM_GPU`로 지정합니다.
+  - 모두 같은 번호면 GPU 한 장을 나눠 씁니다.
+  - 한 장을 나눠 쓰면 vLLM 메모리 비율 `AUDYSSEY_VLLM_GPU_UTIL`을 낮춥니다. 80GB A100에서는 `0.2`로 확인했습니다.
+- 가중치 캐시(`HF_CACHE`)는 컨테이너에 `/hf`로 읽기 전용 연결되며 오프라인(`HF_HUB_OFFLINE=1`)으로 읽습니다.
+- 작업은 `jobs` 볼륨에 남습니다.
+- 컨테이너는 root가 아닌 uid 10001로 실행합니다. 예전 root 이미지로 만든 볼륨은 쓰기 권한이 없으니 `docker volume rm audyssey_jobs` 후 다시 띄웁니다.
+- sv3-a100 예: `HF_CACHE=/home/common/huggingface`.
+  - 기본 Docker 빌드 엔진이 서버 설정 문제로 실패하므로 `docker buildx --builder <docker-container 빌더>`로 빌드합니다.
+- 플래너 기본값은 내부 vLLM(`Qwen/Qwen2.5-VL-3B-Instruct`)입니다. Gemini를 쓰면 vLLM 없이 `docker compose up main separation judge grounding`으로 띄웁니다.
+- GPU 없이 Compose main만: `AUDYSSEY_PLANNER=stub`과 도구 stub 또는 원격 주소를 설정하고 `docker compose up main`을 실행합니다.
 
-vLLM 이미지는 [공식 v0.32.0 릴리스](https://github.com/vllm-project/vllm/releases/tag/v0.32.0)로
-고정했습니다. [해당 버전의 지원 모델](https://docs.vllm.ai/en/v0.32.0/models/supported_models.html)에
-Qwen2.5-VL-3B가 있습니다. 이미지 pull과 GPU 실행은 운영자 확인이 필요합니다.
-Gemini 키를 `.env`의 `GOOGLE_API_KEY`로 준비한 경우 다음 두 줄로 전환합니다.
-`AUDYSSEY_PLANNER_API_KEY`를 따로 설정하면 그 값이 우선합니다.
+### 2.3 C. 노트북 + RunPod GPU
 
-```dotenv
-AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
-```
+RunPod에서는 Pod 안에서 Docker Compose를 쓸 수 없습니다. 그래서 tools 이미지 하나의 기본 CMD로 세 도구를 한 프로세스에서 띄우고,
+노트북에서는 main만 띄웁니다.
 
-Gemini에서는 `docker compose up main separation judge`로 vLLM 없이 실행할 수 있습니다.
-GPU 없이 Compose main만 실행하려면 `AUDYSSEY_PLANNER=stub`과 분리·필터링 stub
-또는 원격 도구 주소를 설정합니다.
-
-이미지는 `ghcr.io/capstone-audissey-fall-2026/audyssey-app:latest`와
-`ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest`입니다.
-처음 배포되어 있다면 `docker compose pull`, 직접 빌드하려면 `docker compose build`를
-먼저 실행합니다. main 반영 또는 수동 workflow 실행 시 GHCR에 latest와 커밋 SHA
-태그를 올립니다. PR에서는 업로드하지 않습니다. 이미지가 비공개면 GHCR 읽기 권한으로
-인증해야 합니다.
-
-## 노트북 + RunPod
-
-RunPod에서 GPU **Pod 하나**를 만들고 다음 값을 설정합니다.
-
-| 설정 | 값 |
+| RunPod 설정 | 값 |
 |---|---|
-| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` |
-| GPU | GPU 1개, CUDA 12.8 지원 드라이버; 필요한 VRAM은 실측 대기 |
+| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` (공개 이미지) |
+| GPU | 1장, CUDA 12.8 드라이버. 세 도구 합계 추정 약 46GB(후보 1개)~53GB(후보 4개)이므로 80GB 권장. 48GB는 미확인 |
 | Expose HTTP ports | `8700` |
-| Container start command | 비워 두어 이미지 기본 CMD 사용 (분리·Judge·그라운딩을 함께 실행) |
-| Network volume | 기존 가중치 캐시가 있는 볼륨을 `/workspace`에 연결 |
-| `HF_HOME` | `/workspace/huggingface` (볼륨 안의 실제 캐시 경로) |
-| `HF_HUB_OFFLINE` / `CUDA_VISIBLE_DEVICES` | `1` / `0` |
-| `AUDYSSEY_TOOL_TOKEN` | 노트북 .env와 같은 비밀 토큰 |
-| 모델 ID 3개 | `.env.example`의 `AUDYSSEY_SAM_AUDIO_MODEL`, `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL`, `AUDYSSEY_SAM3_MODEL` |
+| Container start command | 비움 (이미지 기본 CMD가 분리·Judge·그라운딩을 함께 실행) |
+| Network volume | 가중치 캐시를 미리 받아 둔 볼륨을 `/workspace`에 연결 |
+| 환경변수 | `HF_HOME=/workspace/huggingface`, `HF_HUB_OFFLINE=1`, `CUDA_VISIBLE_DEVICES=0`, 모델 ID 3개(2.7) |
+| 비밀값 | `AUDYSSEY_TOOL_TOKEN`은 공유 템플릿에 넣지 말고 RunPod secrets로 주입 |
 
-Templates → New Template에서 이미지·포트·환경변수·시작 명령을 위 값으로 저장하고,
-Pod 배포 시 그 템플릿과 네트워크 볼륨을 고릅니다. 비밀 토큰은 공유 템플릿에 넣지
-말고 Pod 환경/RunPod secrets로 주입합니다. [템플릿 공식 안내](https://docs.runpod.io/pods/templates/manage-templates).
-
-노트북에서는 `.env.example`을 `.env`로 복사해 토큰과 세 도구의 주소를 넣습니다.
+템플릿은 Templates → New Template에 저장하고 Pod 배포 시 고릅니다([공식 안내](https://docs.runpod.io/pods/templates/manage-templates)).
+노트북 `.env`에는 같은 토큰과 Pod 주소를 넣습니다.
 
 ```dotenv
+AUDYSSEY_TOOL_TOKEN=<Pod와 같은 토큰>
 AUDYSSEY_SEPARATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 AUDYSSEY_FILTER_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 AUDYSSEY_GROUNDING_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
+# 플래너는 Gemini 권장 (2.5)
+AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
+GOOGLE_API_KEY=<비공개>
 ```
 
 ```bash
@@ -145,111 +228,57 @@ docker compose up main
 # http://localhost:8600
 ```
 
-main에는 GPU가 필요 없습니다. RunPod GPU Pod 안에서는 Docker Compose를 실행할 수
-없으므로, 이미지 하나의 기본 CMD로 세 도구를 함께 실행합니다.
-[RunPod의 컨테이너 제한](https://docs.runpod.io/tutorials/pods/build-docker-images).
+### 2.4 D. 내 모듈만 GPU로 개발
 
-## 가중치와 로컬 GPU 환경
-
-가중치는 이미지에 포함하지 않으며 서버가 내려받지 않도록 `HF_HUB_OFFLINE=1`을
-사용합니다. sv3-a100은 `/home/common/huggingface`를 `/hf:ro`로 연결합니다.
-RunPod는 사용자가 별도로 미리 준비한 네트워크 볼륨 캐시를 사용합니다. 공식
-`facebook/sam-audio-*`에는 HF 승인과 SAM License가 필요하고, 미러를 쓸 때도 사용
-권한을 확인해야 합니다. 체크포인트 외에 tokenizer·설정·보조 모델 캐시도 있어야 합니다.
-Judge의 고정 upstream은 `sam_audio` revision을 읽으므로 그 revision도 캐시에 필요합니다.
-미러(`mrfakename/sam-audio-judge`)를 쓸 때도 `sam_audio` 브랜치의 `checkpoint.pt`가 캐시에 있어야 합니다:
-`hf_hub_download('mrfakename/sam-audio-judge', 'checkpoint.pt', revision='sam_audio')`.
-Judge 토크나이저는 revision 없이 `main`에서 읽으므로 `main`의 `config.json`·`tokenizer*.json`·
-`special_tokens_map.json`도 캐시에 있어야 합니다(가중치 제외 약 2MB).
-sv3 공용 캐시에는 공식 `facebook/sam-audio-large-tv`, `facebook/sam-audio-judge`(`sam_audio`·`main`), `facebook/sam3.1`이 있습니다.
-
-SAM Audio 의존성의 numpy<2 조건 때문에 GPU 도구는 별도 Python 3.12 uv 프로젝트를
-씁니다. 루트 환경과 CI에는 torch를 설치하지 않습니다.
+SAM Audio의 numpy<2 제약 때문에 GPU 도구는 루트와 다른 uv 프로젝트 `gpu/`를 씁니다. 루트 환경과 CI에는 torch가 없습니다.
 
 ```bash
 uv sync --project gpu --locked
-# torchcodec(cu128)가 쓰는 NVIDIA NPP 경로. Docker 이미지는 이미 설정되어 있음
+# torchcodec(cu128)가 쓰는 NVIDIA NPP 라이브러리 경로 (Docker 이미지는 설정되어 있음)
 export LD_LIBRARY_PATH="$PWD/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:${LD_LIBRARY_PATH:-}"
-export HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 HF_HOME=/home/common/huggingface
-export AUDYSSEY_SAM_AUDIO_MODEL=mrfakename/sam-audio-large-tv
-export AUDYSSEY_SAM_AUDIO_JUDGE_MODEL=mrfakename/sam-audio-judge
-# AUDYSSEY_TOOL_TOKEN은 환경에서 주입
-uv run --project gpu --locked audyssey tool-server --tool separation --tool filtering --tool grounding --impl real --host 0.0.0.0 --port 8700
+export HF_HOME=<가중치 캐시> HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0
+export AUDYSSEY_TOOL_TOKEN=<임의 토큰>
+
+# 내 도구만 real로 띄우기 (--tool은 separation | filtering | grounding, 여러 번 가능)
+uv run --project gpu --locked audyssey tool-server --tool separation --impl real --host 127.0.0.1 --port 8700
+
+# 다른 터미널: main은 루트 환경, 내 도구만 remote, 나머지는 stub
+AUDYSSEY_SEPARATOR=remote AUDYSSEY_SEPARATOR_URL=http://127.0.0.1:8700 uv run audyssey serve
 ```
 
-한 도구만 실행하려면 `--tool`을 하나만 줍니다. 공개 주소에는 토큰이 필수입니다.
-원격 연결은 TLS 프록시나 SSH 터널로 보호합니다. `GET /health`는 인증 없이
-`{"tools": ["separation", "filtering", "grounding"], "impl": "real"}`을 반환합니다. 모델은 첫 호출에
-프로세스당 한 번 로드하고 호출을 직렬화합니다. span은 positive anchor로 전달하고,
-`attempt`를 시드로 써 재시도를 구분합니다. 출력은 원본 길이의 48 kHz float32 mono
-WAV입니다. 시각 힌트가 있으면 아래 SAM3 그라운딩을 거친 마스크 영상을 함께 사용합니다. Judge는 점수와 통과 여부만 내며
-suggestion은 없습니다. 기준값 0.5는 아직 보정되지 않은 예시입니다.
+- 다른 모듈을 GPU에 올리지 않아도 됩니다. 나머지는 stub으로 둡니다.
+- GPU 없이 HTTP 연결만 확인하려면 루트 환경에서 `--impl stub`으로 띄웁니다.
+- 공개 주소(loopback 밖)에 바인딩하려면 토큰이 필수이고, TLS 프록시나 SSH 터널로 보호합니다.
+- `/health`는 `{"tools": [...], "impl": "..."}`를 반환합니다.
 
-GPU·가중치 없이 HTTP 연결만 확인하려면 루트 환경에서 `--impl stub`을 사용합니다.
-원격 모드는 `AUDYSSEY_SEPARATOR=remote`, `AUDYSSEY_FILTER=remote`, `AUDYSSEY_GROUNDER=remote`, 세 URL과 같은
-토큰을 설정합니다. `AUDYSSEY_REMOTE_TIMEOUT_S` 기본값은 600초입니다. URL이 없으면
-시작 시 오류가 나며 인증·서버·타임아웃 오류는 해당 소스만 실패시킵니다.
+분리·Judge 단독 확인(로딩·실행 시간, 최대 GPU 메모리, 판정, 결과 WAV를 JSON으로 출력):
 
 ```bash
-# 위 offline/GPU 0/모델 ID 환경변수를 설정한 뒤
 uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --out work/jobs/smoke-text
 uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --span 0 3 --out work/jobs/smoke-span
-# CI와 같은 GPU 없는 환경
-uv sync --dev --locked --extra ui --extra llm
-uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 'numpy==1.26.4' python -m unittest discover tests
 ```
 
-스모크 스크립트는 로딩·분리·Judge 시간, 최대 GPU 메모리, torch/CUDA 버전, 판정과
-결과 WAV 경로를 JSON으로 출력합니다.
+### 2.5 플래너를 Gemini 또는 vLLM으로
 
-24GB GPU에 올리기 위해 분리 어댑터는 재순위 후보가 1개이고 구간 예측을 끈 기본 설정에서
-쓰지 않는 ranker와 span predictor를 GPU에 올리지 않습니다(SAM Audio가 None을 공식 지원).
-`AUDYSSEY_SAM_AUDIO_PREDICT_SPANS`를 `true`로 바꾸면 span predictor를 함께 올립니다.
+플래너 real(`planning/real.py`)은 영상 길이에 고르게 뽑은 JPEG 프레임(기본 4장)과 피드백을
+OpenAI 호환 API로 보냅니다. 오디오는 아직 보내지 않습니다.
 
-`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES`를 2 이상으로 두면 후보를 그 수만큼 만들고
-공식 설정과 같은 앙상블(CLAP ×5 + Judge ×1)로 하나를 고릅니다. Judge ranker는
-SAM Audio 기본값(공식 repo 고정) 대신 `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL`을 씁니다.
-ImageBind 체크포인트를 주면 시각 힌트가 있는 소스는 ImageBind로 고릅니다. Compose에서는
-그 파일을 separation 컨테이너에 따로 마운트해야 합니다(sv3: `/home/common/torch/hub/checkpoints/imagebind_huge.pth`).
+| 대상 | 설정 |
+|---|---|
+| Gemini | `AUDYSSEY_PLANNER=real`, `AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`, `AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash`, 키는 `AUDYSSEY_PLANNER_API_KEY`(Compose는 `GOOGLE_API_KEY`를 대신 전달) |
+| 직접 띄운 vLLM | `AUDYSSEY_PLANNER_BASE_URL=http://<vllm>:8000/v1`, `AUDYSSEY_PLANNER_MODEL=<모델 ID>`, 인증 없는 서버는 키 생략 |
+| Compose 내부 vLLM | 기본값. `vllm/vllm-openai:v0.32.0` + `Qwen/Qwen2.5-VL-3B-Instruct` (캐시 필요) |
 
-## 플래너를 Gemini/vLLM에 연결하기
+Python 직접 실행(`uv run audyssey serve`)은 `.env`를 읽지 않습니다. 환경변수로 주거나 `uv run --env-file .env ...`를 씁니다.
 
-`planning/real.py`는 도은 담당 모듈의 교체 가능한 기본 구현입니다. 영상 길이에 고르게
-뽑은 JPEG 프레임(기본 4장, 가로 최대 512px)과 시각·피드백을 기존 OpenAI 호환
-`chat_client(settings)`로 보냅니다. 영상·오디오 파일은 보내지 않습니다. 오디오 전사도
-아직 없으므로 실제 들리는 소리를 확인하는 품질 검증용으로 쓰지 않습니다.
+<details>
+<summary>플래너만 실제로 한 번 호출해 보기</summary>
 
-소스별 Pydantic 검증 후 잘못된 소스는 버리고, 시간과 박스 범위를 자릅니다.
-형식이 깨진 응답은 한 번만 다시 요청하며, 계속 깨지면 플래닝은 실패합니다.
-검증기는 의심스러운 소스만 `PlanIssue`로 보고하고, 두 차례 형식 오류이면 경고를
-기록한 뒤 이슈 없이 진행합니다. API 연결·인증 오류는 호출자에게 전달됩니다.
-
-```bash
-uv sync --dev --extra ui --extra llm
-# Gemini: .env에 GOOGLE_API_KEY를 비공개로 준비 (커밋하거나 출력하지 않음)
-AUDYSSEY_PLANNER=real \
-AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
-AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
-uv run --env-file .env python -c 'import os; from audyssey.cli import serve; os.environ["AUDYSSEY_PLANNER_API_KEY"] = os.environ.get("AUDYSSEY_PLANNER_API_KEY") or os.environ["GOOGLE_API_KEY"]; serve()'
-```
-
-로컬 vLLM 주소가 이미 있으면 `AUDYSSEY_PLANNER=real`,
-`AUDYSSEY_PLANNER_BASE_URL=http://localhost:8000/v1`,
-`AUDYSSEY_PLANNER_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`를 설정하고
-`uv run audyssey serve`를 실행합니다. 인증 없는 로컬 서버는 키를 생략할 수 있습니다.
-Compose의 vLLM 포트는 호스트에 공개하지 않으므로 아래 확인은 Compose 네트워크 안에서 합니다.
-
-### 운영자 실연결 확인 (이 브랜치에서는 실행하지 않음)
-
-같은 스크립트로 `samples/sample.mp4`의 `plan`과 `validate_plan`을 각각 한 번 호출해
-소스 수·이슈 수·소요 시간을 출력합니다. JSON 재요청과 SDK의 전송 재시도는 별도로
-발생할 수 있으므로 반복 호출하지 않습니다. 키·미디어·전체 모델 응답은 출력하지 않습니다.
+`plan`과 `validate_plan`을 한 번씩 호출해 소스 수, 이슈 수, 소요 시간만 출력합니다. 키와 응답 원문은 출력하지 않습니다.
 
 ```bash
 cat > /tmp/audyssey-planner-live.py <<'PYTHON'
-import json
-import os
-import time
+import json, os, time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from audyssey.media import extract_audio, probe
@@ -262,86 +291,233 @@ video = Path(os.environ.get("AUDYSSEY_SMOKE_VIDEO", "samples/sample.mp4"))
 with TemporaryDirectory() as tmp:
     audio = extract_audio(video, Path(tmp) / "audio.wav", False)
     duration, _ = probe(video)
-    start = time.monotonic()
-    plans = plan(video, audio, duration, [])
-    plan_s = time.monotonic() - start
-    start = time.monotonic()
-    issues = validate_plan(video, audio, plans)
-    print(json.dumps({"sources": len(plans), "issues": len(issues),
-                      "plan_s": plan_s, "validate_s": time.monotonic() - start}))
+    start = time.monotonic(); plans = plan(video, audio, duration, []); plan_s = time.monotonic() - start
+    start = time.monotonic(); issues = validate_plan(video, audio, plans)
+    print(json.dumps({"sources": len(plans), "issues": len(issues), "plan_s": plan_s, "validate_s": time.monotonic() - start}))
 PYTHON
 
-# Gemini: root uv environment; .env is read only by the human operator.
+# Gemini
 AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
 AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
 uv run --env-file .env python /tmp/audyssey-planner-live.py
 
-# vLLM: pre-cache Qwen weights/processor under HF_CACHE before starting.
-docker compose pull vllm
-docker compose build main
-docker compose up -d vllm
-# Wait for the vLLM log to report that the API server is ready.
+# Compose 내부 vLLM
+docker compose up -d vllm   # 로그에 API 서버 준비 메시지가 뜰 때까지 대기
 docker compose run --rm -T --entrypoint python \
-  -e AUDYSSEY_PLANNER_BASE_URL=http://vllm:8000/v1 \
-  -e AUDYSSEY_PLANNER_MODEL=Qwen/Qwen2.5-VL-3B-Instruct \
-  -e AUDYSSEY_PLANNER_API_KEY=unused \
-  -e AUDYSSEY_SMOKE_VIDEO=/samples/sample.mp4 \
+  -e AUDYSSEY_PLANNER_BASE_URL=http://vllm:8000/v1 -e AUDYSSEY_PLANNER_MODEL=Qwen/Qwen2.5-VL-3B-Instruct \
+  -e AUDYSSEY_PLANNER_API_KEY=unused -e AUDYSSEY_SMOKE_VIDEO=/samples/sample.mp4 \
   -v "$PWD/samples:/samples:ro" main - < /tmp/audyssey-planner-live.py
 ```
 
-Docker/GPU 실측과 Gemini/vLLM 실제 응답은 운영자가 확인해야 합니다.
-비밀값 없이 Compose만 검사하려면 다음을 실행합니다. `--no-env-resolution`으로 서비스의
-`.env` 로딩을 막고 `--env-file`로 자동 `.env` 보간도 막습니다.
+</details>
+
+### 2.6 LangSmith 모니터링
+
+`.env`(Compose) 또는 환경변수에 세 값을 넣으면 그래프, 도구 호출, 명령, LLM 토큰 사용량이 기록됩니다.
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<개인 키>
+LANGSMITH_PROJECT=audyssey
+```
+
+- 웹 [smith.langchain.com](https://smith.langchain.com)의 Tracing에서 `audyssey` 프로젝트를 엽니다. 프로젝트는 첫 기록 때 자동으로 생깁니다.
+- 기본은 꺼져 있습니다. 끌 때는 `LANGSMITH_TRACING=false`로 둡니다.
+- 오디오·영상·프레임 바이트와 키·토큰은 올리지 않고 경로와 메타데이터만 남깁니다.
+- 플래너 LLM 기록에는 모델명과 토큰 사용량만 남고, 이미지가 든 프롬프트와 응답 원문은 남지 않습니다.
+
+### 2.7 가중치 준비
+
+가중치는 레포와 이미지에 넣지 않습니다. 서버는 다운로드하지 않고 `HF_HOME` 캐시만 오프라인으로 읽습니다.
+
+| 모델 | 설정 | 캐시에 필요한 것 |
+|---|---|---|
+| 분리 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` (또는 미러 `mrfakename/sam-audio-large-tv`) |
+| 필터링 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge`의 `sam_audio` revision 체크포인트 **와** `main` revision의 `config.json`·`tokenizer*.json`·`special_tokens_map.json`(약 2MB). 미러도 `sam_audio` 브랜치의 `checkpoint.pt` 필요 |
+| 그라운딩 | `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1`의 `sam3.1_multiplex.pt` |
+| 후보 고르기(선택) | 후보 2개 이상일 때 | `lukewys/laion_clap`의 `630k-best.pt`와 `roberta-base`·`bert-base-uncased`·`facebook/bart-base` 토크나이저 |
+| 플래너(vLLM) | `AUDYSSEY_VLLM_MODEL` | `Qwen/Qwen2.5-VL-3B-Instruct` |
+
+- 공식 `facebook/sam-audio-*`와 `facebook/sam3.1`은 Hugging Face 승인(SAM License)이 필요합니다. 미러를 쓸 때도 사용 권한을 확인합니다.
+- sv3-a100 공용 캐시 `/home/common/huggingface`에는 위 공식 모델과 미러가 모두 있습니다. 가중치를 복사하지 말고 이 경로를 그대로 연결합니다.
+
+### 2.8 설정 (환경변수)
+
+설정은 `AUDYSSEY_*` 환경변수로만 읽습니다(`src/audyssey/settings.py`).
+
+| 환경변수 | 기본값 | 의미 |
+|---|---|---|
+| `AUDYSSEY_PLANNER` | `stub` | `stub` 또는 `real` (Compose 기본 `real`) |
+| `AUDYSSEY_SEPARATOR` / `AUDYSSEY_FILTER` / `AUDYSSEY_GROUNDER` | `stub` | `stub`, `real`, `remote` (Compose 기본 `remote`) |
+| `AUDYSSEY_SEPARATOR_URL` / `AUDYSSEY_FILTER_URL` / `AUDYSSEY_GROUNDING_URL` | 빈 값 | remote 도구 서버 주소. remote인데 비어 있으면 시작 시 오류 |
+| `AUDYSSEY_TOOL_TOKEN` | 빈 값 | 도구 서버 Bearer 토큰 (main과 도구 서버에 같은 값) |
+| `AUDYSSEY_REMOTE_TIMEOUT_S` | `600` | 원격 도구 호출 타임아웃(초) |
+| `AUDYSSEY_PLANNER_BASE_URL` / `AUDYSSEY_PLANNER_MODEL` / `AUDYSSEY_PLANNER_API_KEY` | 빈 값 | OpenAI 호환 플래너 주소·모델·키 |
+| `AUDYSSEY_PLANNER_FRAMES` | `4` | 플래너·검증기에 보내는 프레임 수 (1~16) |
+| `AUDYSSEY_MAX_PLAN_ROUNDS` | `2` | 플래닝 최대 회차 |
+| `AUDYSSEY_MAX_SEPARATION_RETRIES` | `2` | 소스당 재분리 횟수 (총 시도 = 1 + 이 값) |
+| `AUDYSSEY_MAX_DURATION_S` | `30` | 업로드 영상 길이 상한 |
+| `AUDYSSEY_WORK_DIR` | `work/jobs` | 작업 폴더 |
+| `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` | 분리 모델 |
+| `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge` | Judge 모델 (필터링과 후보 고르기에 사용) |
+| `AUDYSSEY_SAM_AUDIO_DEVICE` | `cuda` | 분리·Judge 장치 |
+| `AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES` | `1` | 분리 후보 수. 2 이상이면 후보를 여러 개 만들고 CLAP×5 + Judge×1 앙상블로 하나를 고름 |
+| `AUDYSSEY_SAM_AUDIO_CLAP_CHECKPOINT` | 빈 값 | 후보 고르기용 CLAP 파일. 빈 값이면 캐시의 `lukewys/laion_clap` 630k-best |
+| `AUDYSSEY_SAM_AUDIO_IMAGEBIND_CHECKPOINT` | 빈 값 | 시각 힌트 소스의 후보 고르기용 ImageBind 파일. 빈 값이면 끔. Compose에서는 파일을 separation 컨테이너에 따로 마운트해야 함 |
+| `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS` | `false` | span이 없을 때 모델이 구간을 예측 (span predictor를 GPU에 추가로 올림) |
+| `AUDYSSEY_JUDGE_PASS_THRESHOLD` | `0.5` | Judge overall 합격 기준 (미보정) |
+| `AUDYSSEY_SAM3_MODEL` / `AUDYSSEY_SAM3_DEVICE` | `facebook/sam3.1` / `cuda` | 그라운딩 모델·장치 (CUDA 전용) |
+| `AUDYSSEY_SAM3_TRACK_FPS` | `2` | 마스크 추적 fps. `0`이면 원본 fps (24GB GPU에서 메모리 부족 위험) |
+
+Compose 전용 값(`.env`): `HF_CACHE`, `AUDYSSEY_{SEPARATION,JUDGE,GROUNDING,VLLM}_GPU`, `AUDYSSEY_VLLM_MODEL`,
+`AUDYSSEY_VLLM_GPU_UTIL`, `GOOGLE_API_KEY`, `LANGSMITH_*`.
+
+---
+
+## 3. 팀 작업 규칙과 CI/CD
+
+### 3.1 코드 수정 규칙
+
+- **자기 모듈 폴더만 고칩니다.**
+  - 담당 도구는 `src/audyssey/tools/<모듈>/real.py`의 함수를 같은 시그니처(1.5)로 구현합니다.
+  - 도구를 바꿀 때 `graph.py`, `api.py`, UI를 고칠 필요가 없어야 합니다. 고쳐야 한다면 설계 문제이니 팀에 공유합니다.
+- **`contracts.py` 변경은 PR에서 팀 합의 후** 머지합니다. 모든 모듈이 이 파일에 기대기 때문입니다.
+- **상태 변경은 명령으로만** 합니다(`handle_command`). 새 편집 기능은 새 명령으로 추가합니다.
+- **설정은 환경변수로 받습니다.** 새 설정은 `settings.py`에 필드를 추가하고, 이 README 2.8 표에 한 줄, 테스트 하나를 함께 넣습니다.
+  - 서버 고유 경로, 키, 모델 경로를 코드에 하드코딩하지 않습니다.
+- **테스트 먼저 씁니다.** 기능 테스트 → 구현 → 통과 순서입니다.
+  - CI에는 GPU가 없으므로 GPU 코드는 가짜 모듈로 검사합니다. 예: `tests/sam_audio_fakes.py`.
+- **검사를 우회하지 않습니다.** `# noqa`, `ty: ignore`, 테스트 skip, 약해진 assert로 CI를 통과시키지 않고 코드를 고칩니다.
+- **의존성**
+  - 루트(`pyproject.toml`)에는 torch를 넣지 않습니다.
+  - GPU 의존성은 `gpu/pyproject.toml`에 넣고 `uv lock --project gpu`로 잠급니다. 남의 패키지 버전 제약을 덮어쓰지 않습니다.
+- **비밀값·가중치**
+  - `.env`는 git에서 제외되어 있으니 커밋하거나 로그에 출력하지 않습니다.
+  - 가중치는 HF 캐시에만 둡니다.
+- **공용 서버**(sv3-a100 등)에서는 다른 사람이 쓰는 GPU, Docker 이미지, 캐시를 건드리지 않습니다.
+  - 내가 만든 이미지·볼륨만 지웁니다.
+  - 쓸 GPU 번호는 미리 공유합니다.
+
+### 3.2 브랜치·커밋 컨벤션
+
+- 브랜치: `<type>/<짧은-설명>`, 예: `feat/sam3-grounding`, `fix/tools-image-ffmpeg`, `docs/e2e-results`.
+- 커밋: Conventional Commits 형식 `<type>(<scope>): <소문자 명령형 요약>`, 예:
+  - `feat(separation): support reranking with configurable ranker checkpoints`
+  - `fix(grounding): track masks at a reduced frame rate`
+  - `build(docker): run app, tools and vllm containers as non-root`
+  - `docs(readme): add sam3 grounding guide`
+- type: `feat`, `fix`, `docs`, `build`(Docker·의존성), `test`, `refactor`, `chore`.
+- scope: `planning`, `separation`, `filtering`, `grounding`, `graph`, `api`, `contracts`, `media`, `toolserver`, `docker`, `gpu`, `readme`, `spec` 등.
+- 한 커밋에는 한 가지 변경만 담습니다. 테스트와 구현은 같은 커밋에 넣어도 됩니다.
+
+### 3.3 commit → push → PR → merge → 배포
+
+| 단계 | 자동으로 일어나는 일 | 내가 할 일 |
+|---|---|---|
+| 1. 브랜치 | 없음 | 최신 `main`에서 브랜치를 만듭니다 |
+| 2. 커밋 | 없음 (로컬 훅 없음) | 커밋 전에 로컬 검사(3.4)를 통과시킵니다 |
+| 3. push | 없음. 브랜치 push만으로는 CI가 돌지 않습니다 | `git push -u origin <브랜치>` |
+| 4. PR (base: `main`) | `ci-lint` 워크플로가 두 job을 실행합니다. `lint-and-format-check`(필수): ruff lint·format, ty, unittest. `numpy-1x`: Python 3.12 + numpy 1.26 unittest | 설명에 요약과 확인 방법을 적습니다. `contracts.py`를 바꿨다면 팀 합의를 받습니다. 실패하면 코드를 고쳐 다시 push합니다 |
+| 5. merge | `main` 보호 규칙이 적용됩니다: 필수 검사 통과 전 머지 불가, 관리자 포함 적용, 강제 push·브랜치 삭제 금지 | 필수 승인 수는 0이지만 리뷰를 받고 머지합니다. 머지 커밋 방식을 쓰며, 머지한 브랜치는 직접 지웁니다 |
+| 6. 배포 | `main` 반영 시 `publish-images` 워크플로가 `audyssey-app`, `audyssey-tools`를 빌드해 GHCR에 `latest`와 커밋 SHA 태그로 올립니다(수동 실행도 가능, PR에서는 안 올림) | GPU 서버: `docker compose pull && docker compose up -d`. RunPod: 새 이미지를 받도록 Pod를 다시 배포하거나 SHA 태그로 고정합니다 |
+
+이미지는 공개(public)라 로그인 없이 받을 수 있습니다. tools 이미지는 약 23GB라 빌드와 pull에 시간이 걸립니다.
+
+### 3.4 로컬에서 CI와 같은 검사
+
+```bash
+uv sync --dev --locked --extra ui --extra llm
+uv run ruff check src/
+uv run ruff format --check src/
+uv run ty check --error-on-warning src/
+uv run python -m unittest discover tests
+# numpy-1x job과 같은 검사
+uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 'numpy==1.26.4' python -m unittest discover tests
+```
+
+ffmpeg/ffprobe가 PATH에 있어야 테스트가 돕니다. 비밀값 없이 Compose 파일만 검사하려면 다음을 실행합니다.
 
 ```bash
 env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resolution --quiet
 ```
 
-## LangSmith로 보기
+---
 
-```bash
-export LANGSMITH_TRACING=true
-export LANGSMITH_API_KEY=...
-export LANGSMITH_PROJECT=audyssey
-uv run audyssey serve
-```
+## 4. 모듈별 담당 작업
 
-키와 tracing 환경변수를 설정하지 않은 기본 상태에서는 아무것도 보내지 않습니다. 호스팅된 LangSmith로 보낼 때는 세 변수를 모두 설정합니다. tracing만 켜고 키를 생략해도 전송 시도는 일어날 수 있으므로 끌 때는 `LANGSMITH_TRACING=false`를 씁니다. 그래프, 도구, 명령과 래핑된 LLM 호출의 토큰 사용량을 볼 수 있습니다. 명령 입력은 `job_id`와 명령만 남기고 Job 전체·설정은 제외합니다. 오디오·영상·프레임 바이트와 키·토큰은 올리지 않고 경로와 메타데이터만 기록합니다. 플래너 LLM trace에는 모델명과 토큰 사용량만 남기며 이미지가 포함된 프롬프트와 원문 응답은 기록하지 않습니다.
+| 모듈 | 위치 | 담당 | 지금 상태 | 해야 할 일 |
+|---|---|---|---|---|
+| 오케스트레이터·API | `graph.py`, `api.py`, `store.py` | 오케스트레이터 담당 | 고정 흐름, 검증 루프, 명령, SSE 동작 | 소스별 병렬 처리, 자연어 → 명령 번역 노드 |
+| UI | `devui/` (임시) | UI 담당 | 개발용 화면만 있음 | 1.5 API만 사용해 최종 화면 설계·구현 |
+| 플래닝 | `tools/planning/real.py` | 플래닝 담당 | LLM 연결 확인용 기본형 | `plan`·`validate_plan` 교체, 모델 선택, 오디오 정보 반영, 시각 힌트 검증 기준 |
+| 분리 | `tools/separation/real.py` | 분리 담당 | SAM Audio large-tv, 후보 여러 개 지원 | 재시도마다 조건·후보 수 전략, 시각 조건 품질 확인 |
+| 필터링 | `tools/filtering/real.py` | 필터링 담당 | SAM Audio Judge 예시 | 합격 기준 보정, 실패 이유와 `suggestion` 생성 |
+| 그라운딩 | `tools/grounding/real.py` | 미정 | SAM3.1 위치 확인·마스크 | 위치 확인 강화, 추적 실패 대비 |
+| 편집·합치기 | `tools/editing/render.py` | 미정 | DSP로 gain·pitch·render | 편집 품질, 추가 편집 명령 |
+| 인프라·배포 | `docker/`, `compose.yaml`, `.github/workflows/` | 인프라 담당 | 이미지 2개, Compose, GHCR 자동 배포 | RunPod 템플릿 검증, 캐시 준비 안내 |
 
+---
 
-## SAM3 시각 그라운딩
+## 5. 모듈별 현재 미흡한 점
 
-플래너의 `VisualHint(time, box, description)`가 있는 소스만 처리합니다. 검증 단계에서
-`locate`가 대상을 못 찾거나 예외를 내면 `visual_hint_not_found` 문제를 재계획에 전달합니다.
-분리 전 `mask_video`가 대상을 앞뒤로 추적해 `masks/<source_id>.mp4`에 저장하고,
-오케스트레이터가 그 경로를 분리 도구에 넘깁니다. SAM Audio는 힌트가 있을 때만
-`masked_videos`로 받습니다. 마스크 실패는 해당 소스만 실패시킵니다.
+성능 문제가 아니라 뼈대 단계에서 확인된 한계입니다. 자세한 실측은 [설계 문서 §13](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#13-미결정--확인-필요)에 있습니다.
 
-기본 `stub`은 고정 박스 밖을 검게 칠하고 `ghost` 설명을 찾지 못한 것으로 처리합니다.
-`real`은 `gpu/`의 고정 SAM3 commit `2814fa619404a722d03e9a012e083e4f293a4e53`을
-사용합니다. `facebook/sam3.1`의 `sam3.1_multiplex.pt`가 기존 HF 캐시에 있어야 합니다.
-로더는 `local_files_only=True`로 캐시만 읽고 다운로드하지 않습니다. SAM3.1 upstream은
-CUDA 전용이므로 `AUDYSSEY_SAM3_DEVICE`에는 CUDA 장치를 지정합니다.
+**오케스트레이터·API**
+- 소스를 하나씩 차례로 분리합니다(`graph.py`의 `ponytail:` 표시). GPU 도구가 여러 개면 병렬화 여지가 있습니다.
+- 서버 프로세스 하나, 작업 큐·DB·사용자 인증이 없습니다. SSE는 저장소를 주기적으로 읽습니다.
+- 자연어 편집 입력(명령 번역 노드)은 아직 없습니다.
 
-```bash
-# GPU·가중치 없이 HTTP 테스트
-uv run audyssey tool-server --tool grounding --impl stub --port 8702
-# 다른 터미널: 메인 서버가 이 도구를 사용
-AUDYSSEY_GROUNDER=remote AUDYSSEY_GROUNDING_URL=http://127.0.0.1:8702 uv run audyssey serve
-```
+**UI**
+- 개발용 최소 화면뿐이고 최종 UI는 정해지지 않았습니다.
 
-`POST /locate`는 multipart `video`와 `hint` JSON을 받아 `GroundResult` JSON을 반환하고,
-`POST /mask`는 같은 입력으로 MP4를 반환합니다. 다른 도구와 같은 Bearer 토큰과
-600초 기본 타임아웃을 사용합니다. compose는 `AUDYSSEY_GROUNDING_GPU`(기본 0)로
-그라운딩 GPU를 지정하며 main의 기본 주소는 `http://grounding:8700`입니다.
-RunPod에서는 세 URL에 같은 Pod 주소를 넣습니다.
+**플래닝**
+- 프레임 이미지만 보고 소스를 추정합니다. 오디오·전사를 쓰지 않아 실제로 들리는 소리인지 보장하지 못합니다.
+- 기본 vLLM 모델(Qwen2.5-VL-3B)은 품질이 낮습니다. 예: 2라운드 뒤 소스가 1개만 남음.
+- 검증기는 의심 소스만 보고하는 수준이고, 형식 오류가 두 번 나면 이슈 없이 진행합니다.
 
-마스크 MP4는 RGB 무손실이며 원본 해상도를 유지합니다. SAM3는 프레임별 추적 상태를 GPU에 쌓으므로
-기본적으로 `AUDYSSEY_SAM3_TRACK_FPS`(기본 2)로 낮춘 영상을 추적하고 그 fps로 마스크 영상을 씁니다.
-SAM Audio는 마스크 영상을 시간 기준으로 맞춰 읽으므로 fps가 원본과 달라도 됩니다. `0`이면 원본 fps
-그대로 추적합니다(1080p60 기준 4fps부터 24GB GPU에서 메모리 부족). 추적하지 못한 프레임은 검은색입니다.
+**분리**
+- 재시도는 `attempt`를 시드로만 씁니다. 필터링이 `suggestion`을 주지 않으니 실제로는 같은 조건으로 다시 뽑습니다.
+- 후보 고르기는 기본으로 꺼져 있습니다(후보 1개). ImageBind는 Compose에 마운트하지 않았습니다.
+- 도구 서버당 모델 하나, 요청 하나씩만 처리합니다. 첫 호출에 모델을 로드하므로 첫 요청이 느립니다.
 
-dnn5(RTX A5000 24GB)에서 1920×1080 60fps 7.1초 샘플로 확인한 값: 위치 찾기 약 27초(첫 호출, 로딩 포함)·
-이후 약 6초, 2fps 마스크 영상 25초(14프레임), 최대 GPU 메모리 14.3GB.
-한계: 힌트 박스를 함께 주므로 SAM3는 박스 안에서 거의 항상 무언가를 찾습니다(없는 대상 "ghost"도 found).
-지금의 위치 확인은 검증으로서 약하며, 기준은 플래닝 담당과 정해야 합니다.
+**필터링**
+- 합격 기준 0.5는 보정 전입니다.
+  - Judge overall은 1~5 범위로 보입니다.
+  - 대사·효과음은 약 1.0, 앰비언스는 약 3.2처럼 소스 종류에 따라 크게 다릅니다.
+  - 지금 기준으로는 거의 모두 통과합니다.
+- 실패 이유와 수정 조건(`suggestion`)을 만들지 않습니다.
+
+**그라운딩**
+- 힌트 박스를 함께 주므로 SAM3가 박스 안에서 거의 항상 무언가를 찾습니다. 없는 대상도 found가 되어 검증으로서 약합니다.
+- 위치 확인(`locate`)이 영상 전체를 불러옵니다. 힌트 시점의 한 프레임만 보면 되므로 줄일 수 있습니다.
+- 아주 작은 대상을 추적 중에 놓치면 마스크 전체가 실패합니다(`No points are provided`). 해당 소스만 실패합니다.
+- 메모리 때문에 2fps로 추적합니다. CUDA 전용입니다.
+
+**편집·합치기**
+- 피치는 ffmpeg `asetrate`+`atempo`로 바꾸는 단순 방식입니다.
+- 영상 오디오는 AAC라 손실 압축됩니다.
+- 구간 단위 편집, 페이드 같은 기능은 없습니다.
+
+**인프라·배포**
+- RunPod 템플릿을 실제 Pod에서 검증하지 않았습니다. 필요한 VRAM은 sv3 측정에서 추정한 값입니다.
+- RunPod 볼륨에 받을 보조 캐시 전체 목록(토크나이저 등)이 정리되지 않았습니다.
+- `.env.example`의 기본값 두 가지가 맞지 않을 수 있습니다.
+  - 모델 ID가 미러입니다.
+  - `AUDYSSEY_VLLM_GPU_UTIL=0.85`라 GPU 한 장을 나눠 쓰면 다른 도구가 메모리 부족으로 실패합니다. 한 장일 때는 직접 낮춥니다.
+- GPU 이미지 빌드는 큰 git 의존성 다운로드가 자주 끊겨 5회 재시도합니다.
+- CI 필수 검사는 `lint-and-format-check` 하나입니다(`numpy-1x`는 필수 아님). GPU 실측은 CI에 없습니다.
+
+---
+
+## 6. 실측 기록
+
+샘플: `samples/sample.mp4` (1920×1080 60fps, 7.1초).
+
+| 환경 | 구성 | 결과 |
+|---|---|---|
+| dnn5, RTX A5000 24GB × 4 | Compose 5개, 도구마다 GPU 1장, `sam-audio-small`, vLLM 플래너 | 306초 ready. 플래닝 루프 2라운드, SAM3 2회, 분리·Judge·render 정상 |
+| dnn5 직접 실행, 루프 유도 | Gemini 플래너, Judge 기준 1.5 | 시각 힌트 4개 → SAM3 마스크 → 시각 조건 분리. 재분리 루프 최대 3회 후 경고 |
+| sv3-a100, A100 80GB × 1 | Compose 5개를 한 장에, 미러 large-tv, 후보 1개 | 468초 ready, 최대 GPU 62.6GB |
+| sv3-a100, A100 80GB × 1 | Compose 5개를 한 장에, 공식 large-tv·Judge·SAM3.1, 후보 4개, vLLM 0.2 | 201초 ready, Judge 4.95 통과, 최대 GPU 69.1GB |
+
+단계별 시간과 메모리, 해결한 문제의 기록은 [설계 문서 §13](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#13-미결정--확인-필요)에 있습니다.
