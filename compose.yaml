@@ -1,9 +1,9 @@
 services:
   main:
-    image: ghcr.io/capstone-audissey-fall-2026/audyssey-main:latest
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-app:latest
     build:
       context: .
-      dockerfile: docker/main.Dockerfile
+      dockerfile: docker/app.Dockerfile
     ports: ["127.0.0.1:8600:8600"]
     env_file: .env
     environment:
@@ -21,10 +21,10 @@ services:
     volumes: ["jobs:/app/work/jobs"]
 
   separation:
-    image: ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest
     build:
       context: .
-      dockerfile: docker/sam-audio.Dockerfile
+      dockerfile: docker/tools.Dockerfile
     command: ["audyssey", "tool-server", "--tool", "separation", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
     env_file: .env
     environment:
@@ -42,10 +42,10 @@ services:
               capabilities: [gpu]
 
   judge:
-    image: ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest
     build:
       context: .
-      dockerfile: docker/sam-audio.Dockerfile
+      dockerfile: docker/tools.Dockerfile
     command: ["audyssey", "tool-server", "--tool", "filtering", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
     env_file: .env
     environment:
@@ -63,10 +63,10 @@ services:
               capabilities: [gpu]
 
   grounding:
-    image: ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest
     build:
       context: .
-      dockerfile: docker/sam-audio.Dockerfile
+      dockerfile: docker/tools.Dockerfile
     command: ["audyssey", "tool-server", "--tool", "grounding", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
     env_file: .env
     environment:

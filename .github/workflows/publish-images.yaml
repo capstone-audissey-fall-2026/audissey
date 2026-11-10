@@ -13,11 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        image: [main, sam-audio]
+        image: [app, tools]
     steps:
       - uses: actions/checkout@v4
       - name: Free disk for GPU image
-        if: matrix.image == 'sam-audio'
+        if: matrix.image == 'tools'
         run: sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3

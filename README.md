@@ -99,8 +99,8 @@ Gemini에서는 `docker compose up main separation judge`로 vLLM 없이 실행�
 GPU 없이 Compose main만 실행하려면 `AUDYSSEY_PLANNER=stub`과 분리·필터링 stub
 또는 원격 도구 주소를 설정합니다.
 
-이미지는 `ghcr.io/capstone-audissey-fall-2026/audyssey-main:latest`와
-`ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest`입니다.
+이미지는 `ghcr.io/capstone-audissey-fall-2026/audyssey-app:latest`와
+`ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest`입니다.
 처음 배포되어 있다면 `docker compose pull`, 직접 빌드하려면 `docker compose build`를
 먼저 실행합니다. main 반영 또는 수동 workflow 실행 시 GHCR에 latest와 커밋 SHA
 태그를 올립니다. PR에서는 업로드하지 않습니다. 이미지가 비공개면 GHCR 읽기 권한으로
@@ -112,7 +112,7 @@ RunPod에서 GPU **Pod 하나**를 만들고 다음 값을 설정합니다.
 
 | 설정 | 값 |
 |---|---|
-| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-sam-audio:latest` |
+| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` |
 | GPU | GPU 1개, CUDA 12.8 지원 드라이버; 필요한 VRAM은 실측 대기 |
 | Expose HTTP ports | `8700` |
 | Container start command | 비워 두어 이미지 기본 CMD 사용 (분리·Judge·그라운딩을 함께 실행) |
