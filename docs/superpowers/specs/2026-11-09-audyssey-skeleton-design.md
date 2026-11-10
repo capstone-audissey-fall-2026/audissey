@@ -295,7 +295,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - 기본 설치에는 torch가 없다. 그래서 stub 모드는 노트북에서도 설치된다.
   - GPU 도구는 별도 `gpu/` uv 프로젝트(Python 3.12, numpy 1.26)로 둔다. 루트는 `[ui]`, `[llm]`을 쓰며 torch를 설치하지 않는다. PyTorch 계열은 공식 cu128 index로 풀고 남의 버전 제약은 덮어쓰지 않는다.
   - 기존 `server/`의 무거운 고정 의존성(flash-attn 휠 등)은 가져오지 않는다.
-- **Docker와 RunPod**: `audyssey-main`(Python 3.13)과 `audyssey-sam-audio`(CUDA 12.8, Python 3.12) 이미지 두 개를 쓴다. compose는 main·separation·judge·grounding 컨테이너를 띄우고, RunPod는 GPU 이미지 기본 CMD로 세 도구를 한 Pod에서 제공한다. main만 띄울 때는 `docker compose up main`을 쓴다. 가중치는 포함하지 않고 HF 캐시를 읽기 전용 볼륨으로 연결한다. GHCR 워크플로는 main push 또는 수동 실행 시 latest·SHA 태그를 올린다. 상세 설정과 템플릿은 README를 따른다. 빌드와 실측은 §13의 sandbox 제한으로 아직 검증 대기다.
+- **Docker와 RunPod**: `audyssey-app`(Python 3.13)과 `audyssey-tools`(CUDA 12.8, Python 3.12) 이미지 두 개를 쓴다. compose는 main·separation·judge·grounding·vllm 컨테이너를 띄우고, RunPod는 GPU 이미지 기본 CMD로 세 도구를 한 Pod에서 제공한다. main만 띄울 때는 `docker compose up main`을 쓴다. 가중치는 포함하지 않고 HF 캐시를 읽기 전용 볼륨으로 연결한다. GHCR 워크플로는 main push 또는 수동 실행 시 latest·SHA 태그를 올린다. 상세 설정과 템플릿은 README를 따른다. 빌드와 실측 결과는 §13에 있다.
 
 ## 11. 코드 구조 (제안)
 
