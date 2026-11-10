@@ -5,6 +5,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import uvicorn
@@ -118,6 +119,23 @@ class ApiTests(unittest.TestCase):
         download = self.client.get(f"/api/jobs/{job['id']}/files/{path}")
         self.assertEqual(download.status_code, 200)
         self.assertGreater(len(download.content), 0)
+
+    def test_final_state_is_saved_after_the_job_lock_is_released(self):
+        # A client that sees "ready" may send an execution command at once; the
+        # lock must already be free by then, or the command gets 409.
+        store = self.app.state.ctx.store
+        save, held = store.save, []
+
+        def checking_save(job):
+            if job.state != "running":
+                held.append(self.app.state.locks[job.id].locked())
+            return save(job)
+
+        with patch.object(store, "save", checking_save):
+            job = self.ready()
+            self.assertEqual(held, [False])
+            response = self.command(job["id"], {"type": "render"})
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_command_conflict_while_busy(self):
         job = self.ready()

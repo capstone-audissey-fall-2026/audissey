@@ -183,7 +183,10 @@ def refresh_residual(job: Job, ctx: Context) -> None:
     update_step(job, ctx, StepStatus(key="residual", status="done"))
 
 
-def analyze(job: Job, ctx: Context) -> Job:
+def analyze(
+    job: Job, ctx: Context, on_finish: Callable[[], None] = lambda: None
+) -> Job:
+    """Run the analysis graph. on_finish runs before the final state is saved."""
     directory = ctx.store.dir(job.id)
     active_key = "preprocess"
 
@@ -347,17 +350,25 @@ def analyze(job: Job, ctx: Context) -> Job:
     )
     builder.add_edge("separate", "residual")
     builder.add_edge("residual", END)
+    error = None
     try:
         builder.compile().invoke(
             AnalysisState(job=job),
             {"recursion_limit": 2 * ctx.settings.max_plan_rounds + 10},
         )
-        job.state = "ready"
     except Exception as exc:
-        job.state, job.error = "failed", str(exc)
+        error = str(exc)
         update_step(
-            job, ctx, StepStatus(key=active_key, status="failed", message=str(exc))
+            job, ctx, StepStatus(key=active_key, status="failed", message=error)
         )
+    finally:
+        on_finish()
+    # Set the final state only now: the job object is shared, so any save after
+    # this line publishes it, and on_finish must already have run.
+    if error is None:
+        job.state = "ready"
+    else:
+        job.state, job.error = "failed", error
     return ctx.store.save(job)
 
 

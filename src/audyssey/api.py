@@ -48,13 +48,9 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
         lock.acquire()
         snapshot = job.model_copy(deep=True)
 
-        def run() -> None:
-            try:
-                analyze(job, ctx)
-            finally:
-                lock.release()
-
-        Thread(target=run, daemon=True).start()
+        # Release the lock before the final state is saved, so a client that sees
+        # ready/failed can run an execution command at once.
+        Thread(target=analyze, args=(job, ctx, lock.release), daemon=True).start()
         return snapshot
 
     @app.get("/api/jobs")
