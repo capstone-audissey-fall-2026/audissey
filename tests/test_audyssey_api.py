@@ -5,12 +5,14 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import uvicorn
 from fastapi.testclient import TestClient
 from tests.audyssey_media import make_video
 from audyssey.api import create_app
+from audyssey.graph import analyze
 from audyssey.settings import Settings
 
 
@@ -118,6 +120,22 @@ class ApiTests(unittest.TestCase):
         download = self.client.get(f"/api/jobs/{job['id']}/files/{path}")
         self.assertEqual(download.status_code, 200)
         self.assertGreater(len(download.content), 0)
+
+    def test_command_right_after_ready_waits_for_analysis_to_finish(self):
+        # Analysis saves "ready" before its thread releases the job lock. Hold the
+        # thread in that window: a client that saw "ready" must not get 409.
+        gate = threading.Event()
+
+        def analyze_then_pause(job, ctx):
+            result = analyze(job, ctx)
+            gate.wait(10)
+            return result
+
+        with patch("audyssey.api.analyze", analyze_then_pause):
+            job = self.ready()
+            threading.Timer(0.2, gate.set).start()
+            response = self.command(job["id"], {"type": "render"})
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_command_conflict_while_busy(self):
         job = self.ready()

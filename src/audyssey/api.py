@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
     app.state.ctx = ctx
     locks: dict[str, Lock] = {}
     jobs: dict[str, Job] = {}
+    analyses: dict[str, Thread] = {}
     app.state.locks, app.state.jobs = locks, jobs
 
     def load(job_id: str) -> Job:
@@ -54,7 +55,8 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
             finally:
                 lock.release()
 
-        Thread(target=run, daemon=True).start()
+        analyses[job.id] = Thread(target=run, daemon=True)
+        analyses[job.id].start()
         return snapshot
 
     @app.get("/api/jobs")
@@ -94,6 +96,10 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
         job = jobs.setdefault(job_id, snapshot)
         lock = locks.setdefault(job_id, Lock())
         execution = isinstance(cmd, (Reseparate, AddSource, Render))
+        # Analysis saves its final state just before releasing the lock; once that
+        # state is visible, wait for the thread instead of reporting busy.
+        if execution and snapshot.state != "running" and job_id in analyses:
+            analyses[job_id].join()
         if execution and not lock.acquire(blocking=False):
             raise HTTPException(409, "job is busy")
         try:
