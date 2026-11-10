@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from audyssey.contracts import FilterResult, GroundResult, SourcePlan, VisualHint
+from audyssey.settings import Settings
+from audyssey.uploads import save_upload
 
 # ponytail: one GPU model, one request at a time; add a queue or batching if throughput matters
 _model_lock = Lock()
@@ -21,6 +23,7 @@ def create_tool_app(
     token: str,
 ) -> FastAPI:
     app = FastAPI()
+    limit = int(Settings().max_upload_mb * 2**20)
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next):
@@ -56,10 +59,9 @@ def create_tool_app(
             with TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 mono_path, video_path = root / "mono.wav", None
-                mono_path.write_bytes(mono.file.read())
+                save_upload(mono, mono_path, limit)
                 if video is not None:
-                    video_path = root / "video.mp4"
-                    video_path.write_bytes(video.file.read())
+                    video_path = save_upload(video, root / "video.mp4", limit)
                 with _model_lock:
                     out = separation.separate(
                         mono_path, source_plan, video_path, root / "track.wav", attempt
@@ -77,8 +79,8 @@ def create_tool_app(
             with TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 mono_path, track_path = root / "mono.wav", root / "track.wav"
-                mono_path.write_bytes(mono.file.read())
-                track_path.write_bytes(track.file.read())
+                save_upload(mono, mono_path, limit)
+                save_upload(track, track_path, limit)
                 with _model_lock:
                     return filtering.judge(mono_path, track_path, source_plan)
 
@@ -96,7 +98,7 @@ def create_tool_app(
             visual_hint = parse_hint(hint)
             with TemporaryDirectory() as tmp:
                 path = Path(tmp) / "video.mp4"
-                path.write_bytes(video.file.read())
+                save_upload(video, path, limit)
                 with _model_lock:
                     return grounding.locate(path, visual_hint)
 
@@ -105,7 +107,7 @@ def create_tool_app(
             visual_hint = parse_hint(hint)
             with TemporaryDirectory() as tmp:
                 path = Path(tmp) / "video.mp4"
-                path.write_bytes(video.file.read())
+                save_upload(video, path, limit)
                 with _model_lock:
                     out = grounding.mask_video(
                         path, visual_hint, Path(tmp) / "mask.mp4"

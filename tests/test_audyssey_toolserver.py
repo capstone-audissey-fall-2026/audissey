@@ -57,6 +57,11 @@ class ToolServerTests(unittest.TestCase):
         self.assertEqual(self.client().post('/judge').status_code, 404)
         self.assertEqual(self.client('filtering').post('/separate').status_code, 404)
 
+    def test_upload_over_limit_is_413(self):
+        with patch.dict('os.environ', AUDYSSEY_MAX_UPLOAD_MB=str(len(self.mono.read_bytes()) / 2 / 2**20)):
+            response = self.client().post('/separate', files=self.files, data=self.data)
+        self.assertEqual(response.status_code, 413)
+
     def test_bad_plan_json_is_422(self):
         for plan in ['{', '{}']:
             self.assertEqual(self.client().post('/separate', files=self.files, data={**self.data, 'plan': plan}).status_code, 422)

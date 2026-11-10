@@ -17,6 +17,12 @@ class StoreTests(unittest.TestCase):
         self.assertEqual((directory / job.video_path).read_bytes(), b"video")
         self.assertEqual(self.store.load(job.id), job)
 
+    def test_create_keeps_only_video_suffixes(self):
+        for name, expected in [("a.MOV", "input.mov"), ("page.html", "input.mp4"), ("noext", "input.mp4")]:
+            job, directory = self.store.create(name, b"video")
+            self.assertEqual(job.video_path, expected)
+            self.assertTrue((directory / expected).exists())
+
     def test_save_increments_version(self):
         job, _ = self.store.create("clip.mp4", b"video")
         version = job.version

@@ -216,6 +216,7 @@ docker compose up
 ```
 
 - main, separation, judge, grounding, vllm 다섯 컨테이너가 뜹니다. 호스트에는 main의 `127.0.0.1:8600`만 공개합니다.
+- main(app 서버)에는 인증이 없습니다. `127.0.0.1` 밖으로 열지 말고, 원격에서 볼 때는 SSH 터널을 쓰세요. 외부에 열어야 하면 인증이 있는 리버스 프록시를 앞에 두어야 합니다.
 - GPU는 도구마다 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_VLLM_GPU`로 지정합니다.
   - 모두 같은 번호면 GPU 한 장을 나눠 씁니다.
   - `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이며 vLLM 메모리 비율 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(80GB A100에서 확인).
@@ -414,6 +415,7 @@ $H Qwen/Qwen2.5-VL-3B-Instruct
 | `AUDYSSEY_MAX_PLAN_ROUNDS` | `2` | 플래닝 최대 회차 |
 | `AUDYSSEY_MAX_SEPARATION_RETRIES` | `2` | 소스당 재분리 횟수 (총 시도 = 1 + 이 값) |
 | `AUDYSSEY_MAX_DURATION_S` | `30` | 업로드 영상 길이 상한 |
+| `AUDYSSEY_MAX_UPLOAD_MB` | `200` | 업로드 파일 하나의 크기 상한 (app 서버와 도구 서버). 넘으면 413 |
 | `AUDYSSEY_WORK_DIR` | `work/jobs` | 작업 폴더 |
 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` | 분리 모델 |
 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge` | Judge 모델 (필터링과 후보 고르기에 사용) |

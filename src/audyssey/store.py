@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from audyssey.contracts import Job
 
+VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm"}
+
 
 class JobStore:
     def __init__(self, root: Path):
@@ -17,8 +19,9 @@ class JobStore:
         job_id = uuid4().hex[:12]
         directory = self.dir(job_id)
         directory.mkdir()
-        suffix = Path(filename).suffix
-        video_path = "input" + suffix
+        # The stored name decides the served Content-Type; never keep e.g. ".html".
+        suffix = Path(filename).suffix.lower()
+        video_path = "input" + (suffix if suffix in VIDEO_SUFFIXES else ".mp4")
         (directory / video_path).write_bytes(data)
         job = self.save(Job(id=job_id, video_path=video_path))
         return job, directory

@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     max_plan_rounds: int = Field(default=2, ge=1)
     max_separation_retries: int = Field(default=2, ge=0)
     max_duration_s: float = Field(default=30, gt=0)
+    # Per uploaded file, on the app and the tool server; checked while streaming.
+    max_upload_mb: float = Field(default=200, gt=0)
     work_dir: Path = Path("work/jobs")
     sam_audio_model: str = "facebook/sam-audio-large-tv"
     sam_audio_judge_model: str = "facebook/sam-audio-judge"
