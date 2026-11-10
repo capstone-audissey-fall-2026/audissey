@@ -1,7 +1,7 @@
 # Audyssey 뼈대(Skeleton) 설계 — Phase 1 최종안
 
 - 날짜: 2026-11-09
-- 작성: 광웅(gwpark0741), Claude와 논의
+- 작성: 팀, Claude와 논의
 - 상태: **구현 승인됨**. 2026-11-09 skeleton 구현 요청으로 승인.
 - 출처: "Agentic Audio Studio — 시스템 구현 명세서 (Draft v0.1)", 팀 모듈 역할 초안(§4), 2026-11-09 논의
 
@@ -58,7 +58,7 @@
 ## 2. 제약
 
 - **이식성이 최우선이다.**
-  - 광웅은 sv3-a100(A100 80GB 1~2장)을 쓰고, 팀원은 RunPod 같은 대여 GPU를 쓴다.
+  - 뼈대 작업은 sv3-a100(A100 80GB 1~2장)에서 하고, 팀원은 RunPod 같은 대여 GPU를 쓴다.
   - 서버 고유 경로를 하드코딩하지 않는다. 모델 ID와 경로, API 주소, 키는 전부 환경변수로 받는다.
   - 모델 가중치는 이미지나 레포에 넣지 않는다. `HF_HOME` 캐시를 쓴다.
     - sv3-a100에서는 공용 캐시 `/home/common/huggingface`를 쓰고, 가중치를 복사하지 않는다.
@@ -78,11 +78,11 @@
 
 | 모듈 | 역할 | 입력 → 출력 | 담당 |
 |---|---|---|---|
-| Orchestrator / API / UI | 흐름 실행, 명령 처리, 상태 전달, 편집 화면 | 명령·도구 결과 → 다음 행동 | 민정·영우·광웅 |
-| Source Planning Tool | 영상과 오디오에서 실제로 들리는 소리 개체와 분리 조건 추론, 프레임과 대조해 검증 | 비디오+오디오(+피드백) → 소스 목록 / 검증 문제 목록 | 도은 |
+| Orchestrator / API / UI | 흐름 실행, 명령 처리, 상태 전달, 편집 화면 | 명령·도구 결과 → 다음 행동 | 오케스트레이터·UI 담당 |
+| Source Planning Tool | 영상과 오디오에서 실제로 들리는 소리 개체와 분리 조건 추론, 프레임과 대조해 검증 | 비디오+오디오(+피드백) → 소스 목록 / 검증 문제 목록 | 플래닝 담당 |
 | Source Separation Tool | 조건에 맞는 소스 분리 | 모노 오디오+조건 → 분리 트랙 | 기존 모델(SAM Audio) |
-| Filtering Tool | 다른 소리가 섞였는지, 빠진 소리가 있는지 판정, 불합격이면 재분리 조건 제안 | 원본+트랙+조건 → 평가 결과(+수정 제안) | 윤석 |
-| Audio Editing / Re-mixing | drop, 음량, 피치 적용과 재합성, 영상에 붙이기 | Job → 믹스·영상·stems | 미정(뼈대는 광웅) |
+| Filtering Tool | 다른 소리가 섞였는지, 빠진 소리가 있는지 판정, 불합격이면 재분리 조건 제안 | 원본+트랙+조건 → 평가 결과(+수정 제안) | 필터링 담당 |
+| Audio Editing / Re-mixing | drop, 음량, 피치 적용과 재합성, 영상에 붙이기 | Job → 믹스·영상·stems | 미정(뼈대 구현 있음) |
 
 ### 3.2 오케스트레이션 방식
 - **MVP는 고정 흐름이다.** LangGraph StateGraph에 노드와 분기를 코드로 고정한다. LLM이 다음 단계를 고르지 않는다.
@@ -137,7 +137,7 @@
 
 두 루프 모두 같은 구조다: **검증 → 실패 이유를 다음 시도에 피드백 → 횟수 한도**.
 
-| | 플래닝 검증 루프 (도은) | 필터링 검증 루프 (윤석) |
+| | 플래닝 검증 루프 (플래닝 담당) | 필터링 검증 루프 (필터링 담당) |
 |---|---|---|
 | 검증하는 것 | 계획한 소스를 실제 프레임과 텍스트에 대조한다. 구간 시점에 그 개체가 보이는지, 박스 위치와 설명이 맞는지 | 분리 트랙에 다른 소리가 섞였는지, 빠진 소리가 있는지(real 구현 후보: SAM Audio Judge) |
 | 실패 시 피드백 | `PlanIssue` 목록 → `plan(feedback=…)` | `FilterResult.reason` + `suggestion`(수정된 조건) |
@@ -199,7 +199,7 @@ Command      = Keep | Drop | SetGain | SetPitch | Reseparate | AddSource | Rende
 ### 7.1 도구 함수
 각 도구 함수의 `stub`, `real`, `remote` 구현은 같은 시그니처를 가진다. grounding은 `locate`와 `mask_video` 두 함수를 제공한다.
 
-**real 구현 (2026-11-10)**: separation은 고정 SAM Audio commit `bb4c6999d2677c7402360e426afc01ddfad6dce0`의 텍스트·positive span API를 사용한다. `attempt` 시드를 적용하고 출력 길이를 맞춘다. filtering은 SAM Audio Judge 예시(윤석 교체 가능)이며 네 점수 중 있는 값을 반환하고 overall ≥ 0.5로 판정한다. suggestion은 None이다. 시각 힌트는 오케스트레이터의 grounding 검증·마스크 생성을 거쳐 연결한다. GPU 의존성은 첫 호출에만 import하고 모델은 캐시·잠금으로 직렬화한다. 실측 상태는 §13을 따른다.
+**real 구현 (2026-11-10)**: separation은 고정 SAM Audio commit `bb4c6999d2677c7402360e426afc01ddfad6dce0`의 텍스트·positive span API를 사용한다. `attempt` 시드를 적용하고 출력 길이를 맞춘다. filtering은 SAM Audio Judge 예시(필터링 담당이 교체 가능)이며 네 점수 중 있는 값을 반환하고 overall ≥ 0.5로 판정한다. suggestion은 None이다. 시각 힌트는 오케스트레이터의 grounding 검증·마스크 생성을 거쳐 연결한다. GPU 의존성은 첫 호출에만 import하고 모델은 캐시·잠금으로 직렬화한다. 실측 상태는 §13을 따른다.
 
 **remote 모드**: `audyssey tool-server`가 분리·필터링 구현을 HTTP로 제공한다.
 - `GET /health`는 인증 없이 `{"tools": [...], "impl": "..."}`을 반환한다. `--tool`을 반복해 같은 프로세스에서 여러 도구를 제공할 수 있다.
@@ -263,7 +263,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
 
 ## 9. UI — 미결정
 
-- 화면 구성, 상태 그래프의 모양, 타임라인 상호작용은 **UI 담당(민정·영우·광웅)이 따로 정한다**.
+- 화면 구성, 상태 그래프의 모양, 타임라인 상호작용은 **UI 담당이 따로 정한다**.
 - 뼈대에는 성공 기준 1을 확인하기 위한 **개발용 최소 화면**만 넣는다.
   - 업로드
   - 단계 상태 목록(회차와 경고 포함)
@@ -278,7 +278,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
   - `AUDYSSEY_PLANNER`에는 `stub` 또는 `real`, `AUDYSSEY_SEPARATOR`, `AUDYSSEY_FILTER`, `AUDYSSEY_GROUNDER`에는 `stub`, `real`, `remote`를 넣는다. 기본값은 `stub`이다.
   - `real`로 선택된 모델은 처음 쓰는 시점에 불러온다. 서버 시작 시 미리 불러오지 않는다.
 - **도구 서버**: `AUDYSSEY_TOOL_TOKEN=... uv run --project gpu --locked audyssey tool-server --tool separation --impl real --host 0.0.0.0 --port 8700`. 필터링은 `--tool filtering --port 8701`로 별도 실행한다. separation real과 Judge 예시는 구현되었고 GPU 환경이 없는 HTTP 검증에는 루트 환경의 `--impl stub`을 쓴다. 원격 연결은 TLS 프록시나 SSH 터널로 보호한다.
-- **플래닝 real**: `AUDYSSEY_PLANNER_BASE_URL`, `AUDYSSEY_PLANNER_MODEL`, `AUDYSSEY_PLANNER_API_KEY`로 Gemini/vLLM의 OpenAI 호환 API를 직접 부른다. `planning/llm.py`의 `chat_client(settings)`를 쓰고 호출 시 `settings.planner_model`을 전달한다. 주소는 필수, 로컬 서버의 키는 생략할 수 있다. real 본체와 모델 선택은 도은 담당이다.
+- **플래닝 real**: `AUDYSSEY_PLANNER_BASE_URL`, `AUDYSSEY_PLANNER_MODEL`, `AUDYSSEY_PLANNER_API_KEY`로 Gemini/vLLM의 OpenAI 호환 API를 직접 부른다. `planning/llm.py`의 `chat_client(settings)`를 쓰고 호출 시 `settings.planner_model`을 전달한다. 주소는 필수, 로컬 서버의 키는 생략할 수 있다. real 본체와 모델 선택은 플래닝 담당 담당이다.
 - **관측**: LangSmith의 `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`로 켠다. 기본은 꺼져 있다. LangGraph 그래프, 네 도구, 명령, LLM 사용량을 기록한다. 명령 입력은 job_id와 명령만 남기며 키·토큰과 오디오·영상 바이트는 기록하지 않는다. 파일 경로와 메타데이터만 남긴다.
 - **전처리**: 길이를 검사하고, ffmpeg로 48kHz 원본 채널 오디오와 모노 오디오를 추출하고, 파형 피크를 만든다.
 - **시스템 요구사항**: stub 모드에는 Python(uv), ffmpeg/ffprobe가 필요하다. 개발용 화면에는 Node가 필요 없다.
@@ -310,9 +310,9 @@ src/audyssey/
   toolserver.py       # 분리·필터링 HTTP 서버
   devui/index.html    # 빌드 없는 개발용 화면 (Node 불필요)
   tools/
-    planning/   stub.py real.py     # 도은 (plan, validate_plan)
+    planning/   stub.py real.py     # 플래닝 담당 (plan, validate_plan)
     separation/ stub.py real.py remote.py     # SAM Audio
-    filtering/  stub.py real.py remote.py     # 윤석 (judge)
+    filtering/  stub.py real.py remote.py     # 필터링 담당 (judge)
     grounding/  stub.py real.py remote.py     # SAM3 (locate, mask_video)
     editing/    render.py           # DSP
 tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
@@ -352,7 +352,7 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 - 도구 서버는 HTTP 창구가 없는 SAM 계열 모델용이다. LLM은 Gemini 또는 vLLM 공식 이미지로 별도 운영한다.
 
 **2026-11-10 플래너·검증기 기본 구현 결정**
-- `planning/real.py`에 도은 담당자가 교체할 수 있는 연결 확인용 기본 구현을 둔다. 성능 검증이나 최종 모델 선택을 의미하지 않는다.
+- `planning/real.py`에 플래닝 담당자가 교체할 수 있는 연결 확인용 기본 구현을 둔다. 성능 검증이나 최종 모델 선택을 의미하지 않는다.
 - 기존 `chat_client(settings)`로 Gemini OpenAI 호환 API와 vLLM을 동일하게 호출한다. JPEG 프레임(기본 4장, 설정 1~16장), 각 시각, 영상 길이와 `PlanIssue` 피드백을 보낸다.
 - 오디오는 이번 기본형에서 보내지 않고 전사도 하지 않는다. 프레임에서 추정한 소스이므로 실제 가청 여부를 보장하지 않는다. 향후 오디오 텍스트 전달 원칙(§13)은 유지한다.
 - JSON 형식 오류는 한 번만 재요청한다. 플래너는 계속 오류이면 실패하며, 개별 형식 오류 소스는 버린다. 유효 소스가 없으면 실패한다. 구간·박스는 범위 안으로 자르고 무효 구간·힌트는 버린다.
@@ -371,9 +371,9 @@ tests/                # stub E2E(루프 포함), residual 항등, 계약 검증
 | SAM3 자동 그라운딩과 visual_hint 연결 | CPU 구현·테스트 완료, GPU·Docker 실측 대기 |
 | UI 디자인 | UI 담당, 뼈대 공유 후 |
 | Audio Editing 담당자 | 팀 |
-| 플래닝 real 모델(Qwen3-VL / Qwen3-Omni / Gemini)과 프레임 검증 방법 | 도은 |
-| 필터링 합격 기준과 suggestion 생성 방법 | 윤석 |
-| SAM Audio 실측(GPU 메모리, 10초 처리 시간, torch 버전 호환성) | 광웅, separation real 작업 시 |
+| 플래닝 real 모델(Qwen3-VL / Qwen3-Omni / Gemini)과 프레임 검증 방법 | 플래닝 담당 |
+| 필터링 합격 기준과 suggestion 생성 방법 | 필터링 담당 |
+| SAM Audio 실측(GPU 메모리, 10초 처리 시간, torch 버전 호환성) | 분리 담당, separation real 작업 시 |
 | 팀원의 SAM Audio 공식 승인 또는 미러 사용 | 팀 |
 
 ### GPU 런타임 호환성 해결 (2026-11-10)
@@ -457,6 +457,6 @@ sv3 확인에서 고친 것: GPU 이미지를 Ubuntu 24.04(ffmpeg 6.1)로 올림
 
 1. 구현 계획 작성
 2. **뼈대 PR (오늘내일)**: 계약, stub 도구, LangGraph 흐름과 검증 루프, API, 개발용 화면, 테스트, README의 팀원 시작 가이드
-3. 각 담당자가 real 구현 착수. 광웅은 SAM Audio separation real과 Judge 연결 예시를 만든다.
+3. 각 담당자가 real 구현 착수. 뼈대 담당이 SAM Audio separation real과 Judge 연결 예시를 만든다.
 4. 기존 코드 삭제 PR, Docker와 RunPod 가이드
 5. 시각 힌트(SAM3), 자연어 명령 번역 노드

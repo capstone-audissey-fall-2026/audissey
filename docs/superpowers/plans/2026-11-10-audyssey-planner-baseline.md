@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 플래닝 모듈의 real 구현을 "성능은 낮아도 도는" 기본형으로 만든다.
-- 이 기본형은 도은님이 나중에 교체한다.
+- 이 기본형은 플래닝 담당자가 나중에 교체한다.
 - 같은 코드가 vLLM(Qwen2.5-VL-3B-Instruct; gemma-3-4b-it는 HF 승인이 없어 403)과 Gemini API(OpenAI 호환 주소) 양쪽에서 돌아야 한다.
 - vLLM을 compose 서비스로 추가한다.
 
@@ -71,7 +71,7 @@
   3. `chat_client(settings).chat.completions.create(model=settings.planner_model, messages=..., response_format={"type": "json_object"})`를 부른다.
   4. 응답을 `{"sources": [SourcePlan, ...]}`로 파싱한다.
   5. Review Focus 1~3을 적용한다.
-- 모듈 docstring에 다음을 적는다: "도은 담당 모듈의 기본 구현. 성능이 아니라 연결 확인용. 교체 가능."
+- 모듈 docstring에 다음을 적는다: "플래닝 담당 담당 모듈의 기본 구현. 성능이 아니라 연결 확인용. 교체 가능."
 
 - [ ] Step 1 실패하는 테스트(가짜 클라이언트 사용)
   - `test_plan_parses_sources_and_clamps`

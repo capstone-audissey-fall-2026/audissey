@@ -177,7 +177,7 @@
 - `OpenAI(base_url=settings.planner_base_url, api_key=settings.planner_api_key or "unused")`를 `langsmith.wrappers.wrap_openai`로 감싸 돌려준다.
 - `planner_base_url`이 비어 있으면 `ValueError`를 낸다.
 - 모델 이름은 호출하는 쪽에서 `settings.planner_model`을 쓴다. 이 함수 docstring에 그렇게 적는다.
-- 이 파일은 플래닝 담당(도은)이 `real.py`에서 쓰라고 두는 진입점이다. `real.py` 본체는 이번에 쓰지 않는다.
+- 이 파일은 플래닝 담당이 `real.py`에서 쓰라고 두는 진입점이다. `real.py` 본체는 이번에 쓰지 않는다.
 
 - [ ] **Step 1: 실패하는 테스트**
   - `test_chat_client_uses_settings`: 반환된 client의 `base_url`이 설정값(끝 `/` 포함 비교)과 같다.
