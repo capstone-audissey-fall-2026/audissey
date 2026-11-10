@@ -1,4 +1,4 @@
-"""필터링 담당 담당 모듈의 예시 구현. 기준과 구현은 교체 가능."""
+"""필터링 담당 모듈의 예시 구현. 기준과 구현은 교체 가능."""
 
 from functools import cache
 from importlib import import_module
