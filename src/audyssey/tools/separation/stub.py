@@ -7,7 +7,7 @@ from audyssey.media import read_wav, write_wav
 
 
 def separate(
-    mono: Path, plan: SourcePlan, video: Path, out: Path, attempt: int
+    mono: Path, plan: SourcePlan, video: Path | None, out: Path, attempt: int
 ) -> Path:
     audio = read_wav(mono)
     track = np.zeros_like(audio)

@@ -74,6 +74,7 @@ def process_source(job: Job, source: Source, ctx: Context) -> None:
     directory = ctx.store.dir(job.id)
     maximum = ctx.settings.max_separation_retries + 1
     source.status = "running"
+    masked_for, video = None, None
     try:
         while True:
             source.attempts += 1
@@ -87,11 +88,17 @@ def process_source(job: Job, source: Source, ctx: Context) -> None:
                     max_rounds=maximum,
                 ),
             )
-            video = directory / job.video_path
-            if source.plan.visual_hint is not None:
+            hint = source.plan.visual_hint if ctx.settings.visual_prompt else None
+            if hint is None:
+                video = None
+            elif hint != masked_for:
+                # Masking runs SAM3 over the whole clip; reuse it while the hint holds.
                 video = ctx.tools.mask_video(
-                    video, source.plan.visual_hint, directory / f"masks/{source.id}.mp4"
+                    directory / job.video_path,
+                    hint,
+                    directory / f"masks/{source.id}.mp4",
                 )
+                masked_for = hint
             path = ctx.tools.separate(
                 directory / job.mono_path,
                 source.plan,
@@ -272,7 +279,7 @@ def analyze(
         )
         for source in job.sources:
             hint = source.plan.visual_hint
-            if hint is None:
+            if hint is None or not ctx.settings.visual_prompt:
                 continue
             try:
                 found = ctx.tools.locate(directory / job.video_path, hint).found

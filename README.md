@@ -25,11 +25,11 @@
 flowchart LR
   UP["영상 업로드"] --> PRE["전처리<br/>48kHz 오디오 · 모노 · 파형"]
   PRE --> PLAN["플래닝<br/>plan"]
-  PLAN --> CHECK{"플래닝 검증<br/>형식 · validate_plan · SAM3 locate"}
+  PLAN --> CHECK{"플래닝 검증<br/>형식 · validate_plan<br/>(시각 힌트 켜면 SAM3 locate)"}
   CHECK -- "문제 있음, 한도 전" --> PLAN
   CHECK -- "통과 또는 한도 도달" --> SRC
   subgraph SRC["소스마다"]
-    MASK["그라운딩 마스크<br/>시각 힌트가 있을 때"] --> SEP["분리<br/>separate"]
+    MASK["그라운딩 마스크<br/>시각 힌트를 켰을 때만"] --> SEP["분리<br/>separate"]
     SEP --> JUDGE{"필터링 검증<br/>judge"}
     JUDGE -- "불합격, 한도 전" --> SEP
   end
@@ -94,7 +94,7 @@ flowchart TB
 |---|---|
 | 소스 | 소리를 내는 개체 하나. 같은 개체가 여러 번 소리를 내면 소스 1개에 구간 여러 개. 다른 개체는 종류가 같아도 다른 소스 |
 | 분리 조건 | 텍스트(필수), 구간 span(선택), 시각 힌트(선택: 시점·0~1 정규화 박스·설명) |
-| 시각 힌트 | 플래너가 화면에 보이는 소스마다 자동 생성. SAM3가 위치를 확인하고 대상 밖을 검게 칠한 마스크 영상을 만들어 분리에 사용 |
+| 시각 힌트 | 플래너가 화면에 보이는 소스마다 자동 생성. **기본은 쓰지 않음** (`AUDYSSEY_VISUAL_PROMPT=false`, 분리는 텍스트·구간으로). 켜면 SAM3가 위치를 확인하고 대상 밖을 검게 칠한 마스크 영상을 만들어 분리에 사용 |
 | 분리 트랙 | 소스당 1개, 원본과 길이가 같은 48kHz mono float32 WAV |
 | 나머지(residual) | `원본 − Σ(소스 트랙)`. 아무것도 바꾸지 않고 합치면 원본과 같음. `source_id="residual"`로 keep/drop/gain 가능 |
 
@@ -102,7 +102,7 @@ flowchart TB
 
 | | 플래닝 검증 루프 | 필터링 검증 루프 |
 |---|---|---|
-| 검증 | 형식 검사(오케스트레이터) → `validate_plan` → 시각 힌트마다 SAM3 `locate` | `judge`가 분리 트랙을 평가 |
+| 검증 | 형식 검사(오케스트레이터) → `validate_plan` → (시각 힌트를 켰을 때) 힌트마다 SAM3 `locate` | `judge`가 분리 트랙을 평가 |
 | 실패 시 | `PlanIssue` 목록을 `plan(feedback=…)`에 전달해 전체를 다시 계획 | `suggestion`이 있으면 그 조건으로, 없으면 `attempt`+1로 해당 소스만 재분리 |
 | 한도 | `AUDYSSEY_MAX_PLAN_ROUNDS=2` | `AUDYSSEY_MAX_SEPARATION_RETRIES=2` (총 3회) |
 | 한도 도달 | 마지막 계획으로 진행, 경고 표시 | 마지막 트랙 사용, `filter.passed=False` 경고 |
@@ -118,7 +118,7 @@ flowchart TB
 ```python
 plan(video_path, audio_path, duration, feedback: list[PlanIssue]) -> list[SourcePlan]
 validate_plan(video_path, audio_path, plans: list[SourcePlan]) -> list[PlanIssue]  # 빈 목록 = 통과
-separate(mono_path, plan: SourcePlan, video_path, out_path, attempt: int) -> out_path
+separate(mono_path, plan: SourcePlan, masked_video_path | None, out_path, attempt: int) -> out_path  # None = 텍스트만
 judge(mono_path, track_path, plan: SourcePlan) -> FilterResult
 locate(video: Path, hint: VisualHint) -> GroundResult
 mask_video(video: Path, hint: VisualHint, out: Path) -> Path
@@ -148,7 +148,7 @@ GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파
 
 ```
 GET  /health                                    인증 없음
-POST /separate  multipart mono, video, plan, attempt        → WAV
+POST /separate  multipart mono, plan, attempt (+ video)     → WAV   video는 시각 힌트를 켰을 때만
 POST /judge     multipart mono, track, plan                  → FilterResult
 POST /locate    multipart video, hint                        → GroundResult
 POST /mask      multipart video, hint                        → MP4
@@ -423,6 +423,7 @@ $H Qwen/Qwen2.5-VL-3B-Instruct
 | `AUDYSSEY_SAM_AUDIO_IMAGEBIND_CHECKPOINT` | 빈 값 | 시각 힌트 소스의 후보 고르기용 ImageBind 파일. 빈 값이면 끔. Compose에서는 파일을 separation 컨테이너에 따로 마운트해야 함 |
 | `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS` | `false` | span이 없을 때 모델이 구간을 예측 (span predictor를 GPU에 추가로 올림) |
 | `AUDYSSEY_JUDGE_PASS_THRESHOLD` | `0.5` | Judge overall 합격 기준 (미보정) |
+| `AUDYSSEY_VISUAL_PROMPT` | `false` | 시각 힌트 사용. 켜면 계획 검증에서 SAM3 `locate`, 분리 전 `mask_video`를 실행하고 마스크 영상을 분리에 넣음 |
 | `AUDYSSEY_SAM3_MODEL` / `AUDYSSEY_SAM3_DEVICE` | `facebook/sam3.1` / `cuda` | 그라운딩 모델·장치 (CUDA 전용) |
 | `AUDYSSEY_SAM3_TRACK_FPS` | `2` | 마스크 추적 fps. `0`이면 원본 fps (24GB GPU에서 메모리 부족 위험) |
 
@@ -546,7 +547,8 @@ env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resol
 
 **그라운딩**
 - 힌트 박스를 함께 주므로 SAM3가 박스 안에서 거의 항상 무언가를 찾습니다. 없는 대상도 found가 되어 검증으로서 약합니다.
-- 위치 확인(`locate`)이 영상 전체를 불러옵니다. 힌트 시점의 한 프레임만 보면 되므로 줄일 수 있습니다.
+- 시각 힌트는 기본으로 꺼져 있습니다. 텍스트 설명이 있으면 마스크가 분리 결과를 거의 바꾸지 못했습니다(실측 기록 참고). 같은 성별 두 사람처럼 텍스트로 구분이 안 되는 장면에서만 켤 만합니다.
+- 마스크는 대상만 남기고 나머지를 검게 칠합니다. SAM Audio의 `mask_videos`는 반대로 대상을 지우지만, 공식 벤치마크 화자 쌍에서 마스크가 효과를 낸 경우는 모두 우리 방향이었습니다. 코드를 `mask_videos`에 맞춰 바꾸지 마세요.
 - 아주 작은 대상을 추적 중에 놓치면 마스크 전체가 실패합니다(`No points are provided`). 해당 소스만 실패합니다.
 - 메모리 때문에 2fps로 추적합니다. CUDA 전용입니다.
 
@@ -573,5 +575,18 @@ env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resol
 | dnn5 직접 실행, 루프 유도 | Gemini 플래너, Judge 기준 1.5 | 시각 힌트 4개 → SAM3 마스크 → 시각 조건 분리. 재분리 루프 최대 3회 후 경고 |
 | sv3-a100, A100 80GB × 1 | Compose 5개를 한 장에, 미러 large-tv, 후보 1개 | 468초 ready, 최대 GPU 62.6GB |
 | sv3-a100, A100 80GB × 1 | Compose 5개를 한 장에, 공식 large-tv·Judge·SAM3.1, 후보 4개, vLLM 0.2 | 201초 ready, Judge 4.95 통과, 최대 GPU 69.1GB |
+
+**시각 힌트 기본 끄기 이후** (sv3-a100 A100 80GB × 1, 한 프로세스에서 실제 모델 실행, Gemini 2.5 Flash 플래너, large-tv, 후보 1개. 영상은 SAM Audio 공식 예제 `office.mp4`, 640×360, 15초. 시간은 모델이 이미 올라간 뒤 `ready`까지)
+
+| 조건 | 결과 |
+|---|---|
+| 시각 힌트 끔 | 38.5초. 소스 6개, 루프 반복 없음 |
+| 시각 힌트 켬 | 102.9초. `locate` 11회 5.6초, `mask_video` 5회 22.1초. 소스 1개는 SAM3가 추적 중 대상을 놓쳐 실패(`No points are provided`) |
+| 시각 힌트 끔 + 루프 강제 (`AUDYSSEY_JUDGE_PASS_THRESHOLD=5`) | 123.0초. 플래닝 2라운드, 소스 4개 × 분리 3회. render 0.4초. 모델 로딩을 포함한 첫 실행은 133.7초 |
+| `locate` 한 번 (`samples/sample.mp4`, 1080p60) | 영상 전체 16.4초 → 힌트 프레임 한 장 1.9초, 같은 박스 |
+
+시각 힌트 효과 확인:
+- `office.mp4`(말하는 사람 1명): 텍스트 설명이 있으면 마스크를 어떻게 넣어도 결과가 텍스트만일 때와 2% 안팎으로만 달랐습니다. 텍스트 없이 마스크만 넣으면 무음이었습니다.
+- `facebook/sam-audio-bench`의 같은 성별 화자 쌍 5장면(공식 마스크): 마스크가 지정한 화자를 뽑은 장면은 2개였고, 모두 대상만 남기는 방향이었습니다. 나머지 3장면은 마스크가 결과를 바꾸지 못했습니다.
 
 단계별 시간과 메모리, 해결한 문제의 기록은 [설계 문서 §13](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#13-미결정--확인-필요)에 있습니다.

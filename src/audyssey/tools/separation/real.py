@@ -60,7 +60,7 @@ def _load():
 
 
 def separate(
-    mono: Path, plan: SourcePlan, video: Path, out: Path, attempt: int
+    mono: Path, plan: SourcePlan, video: Path | None, out: Path, attempt: int
 ) -> Path:
     settings = Settings()
     audio = read_wav(mono)
@@ -73,7 +73,7 @@ def separate(
             descriptions=[plan.description],
             audios=[torch.from_numpy(audio.T)],
             anchors=anchors,
-            **({"masked_videos": [str(video)]} if plan.visual_hint is not None else {}),
+            **({"masked_videos": [str(video)]} if video is not None else {}),
         ).to(settings.sam_audio_device)
         with torch.inference_mode():
             torch.manual_seed(attempt)

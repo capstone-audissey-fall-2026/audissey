@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     filter: Literal["stub", "real", "remote"] = "stub"
     grounder: Literal["stub", "real", "remote"] = "stub"
     grounding_url: str = ""
+    # Visual prompting (SAM3 locate + masked video for SAM Audio) is off by default:
+    # with a text description the mask barely changed separation in our tests.
+    visual_prompt: bool = False
     sam3_model: str = "facebook/sam3.1"
     sam3_device: str = "cuda"
     # SAM3 keeps per-frame tracking state on the GPU; 1080p60 at 4 fps already needs >24 GB.

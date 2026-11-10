@@ -83,6 +83,7 @@ class GraphTests(unittest.TestCase):
         self.assertTrue((self.directory / job.residual.path).is_file())
 
     def test_plan_round_limit_warns(self):
+        self.ctx.settings.visual_prompt = True
         self.ctx.settings.max_plan_rounds = 1
         job = graph.analyze(self.job, self.ctx)
         self.assertEqual(
@@ -210,6 +211,7 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(job.sources[1].gain, 0.5)
 
     def test_hint_not_found_triggers_replan(self):
+        self.ctx.settings.visual_prompt = True
         from audyssey.contracts import GroundResult, VisualHint
         feedback = []
         hint = VisualHint(time=1, box=(0, 0, .5, 1), description='ghost')
@@ -224,6 +226,7 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(feedback[1][0].source_name, 'a')
 
     def test_locate_exception_becomes_issue(self):
+        self.ctx.settings.visual_prompt = True
         from audyssey.contracts import VisualHint
         hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
         def fail(*args):
@@ -235,9 +238,10 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(job.plan_issues[0].kind, 'visual_hint_not_found')
         self.assertIn('grounder unavailable', job.plan_issues[0].message)
 
-    def test_masked_video_passed_to_separate_only_with_hint(self):
+    def test_visual_prompt_masks_video_only_with_hint(self):
         from audyssey.contracts import VisualHint
         from unittest.mock import Mock
+        self.ctx.settings.visual_prompt = True
         extract_audio(self.directory / 'input.mp4', self.directory / 'mono.wav', True)
         self.job.mono_path = 'mono.wav'
         mask = Mock(side_effect=lambda video, hint, out: out)
@@ -246,13 +250,51 @@ class GraphTests(unittest.TestCase):
         source = Source(id='s1', plan=SourcePlan(name='a', kind='sfx', description='sound'))
         graph.process_source(self.job, source, self.ctx)
         mask.assert_not_called()
-        self.assertEqual(separate.call_args.args[2], self.directory / 'input.mp4')
+        self.assertIsNone(separate.call_args.args[2])
         source.plan.visual_hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
         graph.process_source(self.job, source, self.ctx)
         self.assertEqual(separate.call_args.args[2], self.directory / 'masks/s1.mp4')
         mask.assert_called_once_with(self.directory / 'input.mp4', source.plan.visual_hint, self.directory / 'masks/s1.mp4')
 
+    def test_visual_prompt_off_ignores_hints(self):
+        from audyssey.contracts import VisualHint
+        from unittest.mock import Mock
+        hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
+        locate, mask = Mock(), Mock()
+        separate = Mock(wraps=self.ctx.tools.separate)
+        self.ctx.tools = replace(
+            self.ctx.tools,
+            plan=lambda *args: [SourcePlan(name='a', kind='sfx', description='sound', visual_hint=hint)],
+            locate=locate, mask_video=mask, separate=separate,
+        )
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, 'ready', job.error)
+        locate.assert_not_called()
+        mask.assert_not_called()
+        self.assertIsNone(separate.call_args.args[2])
+
+    def test_mask_reused_across_retries_with_same_hint(self):
+        from audyssey.contracts import FilterResult, VisualHint
+        from unittest.mock import Mock
+        self.ctx.settings.visual_prompt = True
+        extract_audio(self.directory / 'input.mp4', self.directory / 'mono.wav', True)
+        self.job.mono_path = 'mono.wav'
+        mask = Mock(side_effect=lambda video, hint, out: out)
+        judge = Mock(return_value=FilterResult(passed=False, reason='low'))
+        self.ctx.tools = replace(self.ctx.tools, mask_video=mask, judge=judge)
+        hint = VisualHint(time=1, box=(0, 0, .5, 1), description='a')
+        source = Source(id='s1', plan=SourcePlan(name='a', kind='sfx', description='sound', visual_hint=hint))
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual(source.attempts, self.ctx.settings.max_separation_retries + 1)
+        mask.assert_called_once()
+        moved = hint.model_copy(update={'time': 2})
+        judge.return_value = FilterResult(passed=False, suggestion=source.plan.model_copy(update={'visual_hint': moved}))
+        source.attempts = 0
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual([c.args[1] for c in mask.call_args_list], [hint, hint, moved])
+
     def test_mask_failure_fails_only_that_source(self):
+        self.ctx.settings.visual_prompt = True
         from audyssey.contracts import VisualHint
         original = self.ctx.tools.plan
         def plan(*args):

@@ -51,17 +51,31 @@ class Sam3GroundingTests(unittest.TestCase):
         masks[1, :, :80] = True
         return {'out_obj_ids': np.array([4, 8]), 'out_probs': np.array([.6, .9]), 'out_boxes_xywh': np.array([[.625, 0, .375, 1], [0, 0, .5, 1]]), 'out_binary_masks': masks}
 
-    def test_locate_returns_normalized_best_box(self):
+    def test_locate_prompts_only_the_hint_frame(self):
+        seen = {}
+        def init_state(**kwargs):
+            seen['frame'] = frames(Path(kwargs['resource_path']))
+            seen['path'] = kwargs['resource_path']
+            return self.state.copy()
+        self.model.init_state.side_effect = init_state
         result = self.real.locate(self.video, self.hint)
         self.assertTrue(result.found)
         self.assertEqual(result.box, (0, 0, .5, 1))
         self.assertAlmostEqual(result.score, .9)
+        self.assertTrue(seen['path'].endswith('.png'))
+        np.testing.assert_array_equal(seen['frame'][0], frames(self.video)[10])
         args = self.model.add_prompt.call_args.kwargs
-        self.assertEqual(args['frame_idx'], 10)
+        self.assertEqual(args['frame_idx'], 0)
         self.assertEqual(args['text_str'], 'man')
         np.testing.assert_allclose(args['boxes_xywh'], [[.1, .2, .5, .6]])
         self.assertEqual(args['box_labels'], [1])
         self.assertEqual(args['inference_state'], {})
+
+    def test_locate_hint_after_end_raises(self):
+        hint = self.hint.model_copy(update={'time': 60})
+        with self.assertRaisesRegex(ValueError, 'outside the video'):
+            self.real.locate(self.video, hint)
+        self.model.init_state.assert_not_called()
 
     def test_locate_not_found(self):
         self.outputs = {'out_obj_ids': np.array([]), 'out_probs': np.array([])}
@@ -183,8 +197,17 @@ class Sam3GroundingTests(unittest.TestCase):
         return [float(f['best_effort_timestamp_time']) for f in json.loads(result.stdout)['frames']]
 
     def test_variable_timestamp_selects_actual_hint_frame(self):
-        self.real.locate(self.variable_video(), self.hint.model_copy(update={'time': 1.6}))
-        self.assertEqual(self.model.add_prompt.call_args.kwargs['frame_idx'], 2)
+        video, seen = self.variable_video(), {}
+        def init_state(**kwargs):
+            seen['frame'] = frames(Path(kwargs['resource_path']))
+            return self.state.copy()
+        self.model.init_state.side_effect = init_state
+        self.real.locate(video, self.hint.model_copy(update={'time': 1.6}))
+        import subprocess
+        # Decoded frame 2 (t=1.5s) is shown at 1.6s; decode without CFR duplicates.
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(video), '-vsync', '0', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], check=True, capture_output=True).stdout
+        decoded = np.frombuffer(raw, np.uint8).reshape(-1, 120, 160, 3)
+        np.testing.assert_array_equal(seen['frame'][0], decoded[2])
 
     def test_mask_preserves_variable_frame_timestamps(self):
         video = self.variable_video()
