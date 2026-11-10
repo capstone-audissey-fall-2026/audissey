@@ -12,7 +12,6 @@ import uvicorn
 from fastapi.testclient import TestClient
 from tests.audyssey_media import make_video
 from audyssey.api import create_app
-from audyssey.graph import analyze
 from audyssey.settings import Settings
 
 
@@ -121,19 +120,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(download.status_code, 200)
         self.assertGreater(len(download.content), 0)
 
-    def test_command_right_after_ready_waits_for_analysis_to_finish(self):
-        # Analysis saves "ready" before its thread releases the job lock. Hold the
-        # thread in that window: a client that saw "ready" must not get 409.
-        gate = threading.Event()
+    def test_final_state_is_saved_after_the_job_lock_is_released(self):
+        # A client that sees "ready" may send an execution command at once; the
+        # lock must already be free by then, or the command gets 409.
+        store = self.app.state.ctx.store
+        save, held = store.save, []
 
-        def analyze_then_pause(job, ctx):
-            result = analyze(job, ctx)
-            gate.wait(10)
-            return result
+        def checking_save(job):
+            if job.state != "running":
+                held.append(self.app.state.locks[job.id].locked())
+            return save(job)
 
-        with patch("audyssey.api.analyze", analyze_then_pause):
+        with patch.object(store, "save", checking_save):
             job = self.ready()
-            threading.Timer(0.2, gate.set).start()
+            self.assertEqual(held, [False])
             response = self.command(job["id"], {"type": "render"})
         self.assertEqual(response.status_code, 200, response.text)
 
