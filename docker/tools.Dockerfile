@@ -23,5 +23,9 @@ ENV PATH="/app/gpu/.venv/bin:$PATH" HF_HOME=/hf HF_HUB_OFFLINE=1 CUDA_VISIBLE_DE
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # torchcodec cu128 needs NVIDIA NPP from the nvidia-npp-cu12 wheel at load time.
 ENV LD_LIBRARY_PATH="/app/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:$LD_LIBRARY_PATH"
+# Run as an unprivileged user. The HF cache is mounted read-only; triton keeps its
+# compile cache under the user's home.
+RUN useradd --create-home --uid 10001 app
+USER app
 EXPOSE 8700
 CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--tool", "grounding", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
