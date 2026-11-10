@@ -12,6 +12,7 @@ from audyssey.graph import Context, analyze, handle_command
 from audyssey.media import MediaError, check_upload
 from audyssey.settings import Settings
 from audyssey.store import JobStore
+from audyssey.uploads import save_upload
 from audyssey.tools import Tools, load_tools
 
 
@@ -32,14 +33,14 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
 
     @app.post("/api/jobs", status_code=201)
     def upload(file: UploadFile) -> Job:
-        data = file.file.read()
         with TemporaryDirectory() as tmp:
-            path = Path(tmp) / ("upload" + Path(file.filename or "video.mp4").suffix)
-            path.write_bytes(data)
+            limit = int(settings.max_upload_mb * 2**20)
+            path = save_upload(file, Path(tmp) / "upload", limit)
             try:
                 duration = check_upload(path, settings.max_duration_s)
             except MediaError as exc:
                 raise HTTPException(400, str(exc)) from exc
+            data = path.read_bytes()
         job, _ = ctx.store.create(file.filename or "video.mp4", data)
         job.duration = duration
         ctx.store.save(job)

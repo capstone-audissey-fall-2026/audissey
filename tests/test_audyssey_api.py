@@ -25,16 +25,16 @@ class ApiTests(unittest.TestCase):
         self.client = TestClient(self.app)
         self.addCleanup(self.client.close)
 
-    def upload(self):
+    def upload(self, name="clip.mp4"):
         response = self.client.post(
             "/api/jobs",
-            files={"file": ("clip.mp4", self.video.read_bytes(), "video/mp4")},
+            files={"file": (name, self.video.read_bytes(), "video/mp4")},
         )
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["id"]
 
-    def ready(self):
-        job_id = self.upload()
+    def ready(self, name="clip.mp4"):
+        job_id = self.upload(name)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             job = self.client.get(f"/api/jobs/{job_id}").json()
@@ -56,6 +56,20 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("audio stream", response.json()["detail"])
         self.assertEqual(self.client.get("/api/jobs").json(), [])
+
+    def test_upload_rejects_too_large(self):
+        self.app.state.ctx.settings.max_upload_mb = len(self.video.read_bytes()) / 2 / 2**20
+        response = self.client.post(
+            "/api/jobs", files={"file": ("clip.mp4", self.video.read_bytes())}
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(self.client.get("/api/jobs").json(), [])
+
+    def test_upload_html_name_is_served_as_video(self):
+        job = self.ready("page.html")
+        self.assertEqual(job["video_path"], "input.mp4")
+        served = self.client.get(f"/api/jobs/{job['id']}/files/input.mp4")
+        self.assertEqual(served.headers["content-type"], "video/mp4")
 
     def test_upload_rejects_too_long(self):
         self.app.state.ctx.settings.max_duration_s = 2
