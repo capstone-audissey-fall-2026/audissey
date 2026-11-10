@@ -3,8 +3,14 @@
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /usr/local/bin/uv
 # gcc/libc6-dev: triton compiles GPU kernels at runtime (SAM Audio Judge).
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg git gcc libc6-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Ubuntu mirrors sometimes drop connections, and a slow download can outlive the
+# package index (404). Retry each file, and rerun update + install a few times.
+RUN for i in 1 2 3; do \
+      apt-get update && apt-get install -y -o Acquire::Retries=5 --no-install-recommends \
+        ca-certificates ffmpeg git gcc libc6-dev \
+      && rm -rf /var/lib/apt/lists/* && exit 0; \
+      echo "apt attempt $i failed, retrying"; sleep 15; \
+    done; exit 1
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
 RUN uv python install 3.12
 WORKDIR /app
