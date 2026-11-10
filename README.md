@@ -237,7 +237,7 @@ RunPod에서는 Pod 안에서 Docker Compose를 쓸 수 없습니다. 그래서 
 | RunPod 설정 | 값 |
 |---|---|
 | Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` (공개 이미지) |
-| GPU | 1장, CUDA 12.8 드라이버. 세 도구 합계 추정 약 46GB(후보 1개)~53GB(후보 4개)이므로 80GB 권장. 48GB는 미확인 |
+| GPU | 1장, CUDA 12.8 드라이버. 기본 설정(시각 힌트 끔)에서 세 도구 합계 약 34GB로 추정되어 48GB 이상 권장. 시각 힌트를 켜면 SAM3가 더해져 약 53GB이므로 80GB 권장 |
 | Expose HTTP ports | `8700` |
 | Container start command | 비움 (이미지 기본 CMD가 분리·Judge·그라운딩을 함께 실행) |
 | Network volume | 가중치 캐시를 미리 받아 둔 볼륨을 `/workspace`에 연결 |
@@ -560,7 +560,7 @@ env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resol
 - 구간 단위 편집, 페이드 같은 기능은 없습니다.
 
 **인프라·배포**
-- RunPod 템플릿을 실제 Pod에서 검증하지 않았습니다. 필요한 VRAM은 sv3 측정에서 추정한 값입니다.
+- RunPod 템플릿을 실제 Pod에서 검증하지 않았습니다. 필요한 VRAM은 sv3 Compose 측정에서 vLLM 몫(약 16GB)을 뺀 추정값입니다.
 - 2.7의 다운로드 목록은 sv3에서 그 목록만 담은 캐시로 확인했지만, 빈 RunPod 볼륨에 처음부터 받아 보지는 않았습니다.
 - GPU 이미지 빌드는 큰 git 의존성 다운로드가 자주 끊겨 5회 재시도합니다.
 - CI 필수 검사는 `lint-and-format-check` 하나입니다(`numpy-1x`는 필수 아님). GPU 실측은 CI에 없습니다.
@@ -577,6 +577,7 @@ env -i PATH="$PATH" docker compose --env-file .env.example config --no-env-resol
 | dnn5 직접 실행, 루프 유도 | Gemini 플래너, Judge 기준 1.5 | 시각 힌트 4개 → SAM3 마스크 → 시각 조건 분리. 재분리 루프 최대 3회 후 경고 |
 | sv3-a100, A100 80GB × 1 | Compose 5개를 한 장에, 미러 large-tv, 후보 1개 | 468초 ready, 최대 GPU 62.6GB |
 | sv3-a100, A100 80GB × 1 | Compose 5개를 한 장에, 공식 large-tv·Judge·SAM3.1, 후보 4개, vLLM 0.2 | 201초 ready, Judge 4.95 통과, 최대 GPU 69.1GB |
+| sv3-a100, A100 80GB × 1 | GHCR 이미지(`65bd7a3`), 시각 힌트 끔(기본), 후보 4개, vLLM 0.2 | 131초 ready, SAM3 호출 없음, Judge 5.01 통과, 오류 0, 최대 GPU 49.9GB |
 
 **시각 힌트 기본 끄기 이후** (sv3-a100 A100 80GB × 1, 한 프로세스에서 실제 모델 실행, Gemini 2.5 Flash 플래너, large-tv, 후보 1개. 영상은 SAM Audio 공식 예제 `office.mp4`, 640×360, 15초. 시간은 모델이 이미 올라간 뒤 `ready`까지)
 
