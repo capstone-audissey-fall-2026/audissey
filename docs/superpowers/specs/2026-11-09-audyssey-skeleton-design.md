@@ -438,6 +438,11 @@ sv3-a100의 `mrfakename/sam-audio-large-tv` 실측은 GPU를 다른 작업이 �
 | compose 컨테이너 5개 | vLLM | 306초 ready. 플래닝 루프 2라운드(검증 문제 → 재계획 → 한도 도달 경고), SAM3 위치 확인 2회, 분리·Judge·render 정상. GPU 7.9 / 7.4 / 5.1 / 16.5GB |
 | 직접 실행(기본) | vLLM | 229초 ready. 위와 같은 흐름 |
 | 직접 실행(루프 유도) | Gemini 2.5 Flash | Judge 기준 1.5로 1172초 ready. 시각 힌트 4개 → SAM3 마스크 영상 → SAM Audio 시각 조건 분리. 재분리 루프 최대 3회 후 경고. 앰비언스만 3.17로 통과 |
+| sv3-a100 compose, GPU 1장 | vLLM | A100 80GB 한 장에 컨테이너 5개. 468초 ready. SAM3 마스크 → `mrfakename/sam-audio-large-tv` 시각 조건 분리 → Judge overall 4.95 통과 → render. 최대 GPU 62.6GB |
+
+sv3 확인에서 고친 것: GPU 이미지를 Ubuntu 24.04(ffmpeg 6.1)로 올림(22.04의 ffmpeg 4.4는 마스크 인코딩의 concat `option`을
+모름), SAM Audio의 ranker·span predictor를 생성 단계에서 끔(ranker가 공식 `facebook/sam-audio-judge`를 불러와 미러만 있는
+캐시에서 실패). Judge 미러는 SAM Audio가 고정한 `sam_audio` 브랜치의 `checkpoint.pt`가 캐시에 있어야 한다.
 
 플래너 단독 실호출: vLLM은 소스 3개·검증 문제 1개(21.8초/3.9초), Gemini는 소스 6개·검증 문제 1개(20.5초/10.5초).
 

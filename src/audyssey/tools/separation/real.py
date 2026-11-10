@@ -23,13 +23,16 @@ def _load():
         raise RuntimeError(
             "SAM Audio is not installed: install the gpu/ environment"
         ) from exc
-    model = sam.SAMAudio.from_pretrained(settings.sam_audio_model)
-    # Rankers and the span predictor are ~4.4B of small's 5.8B params; SAMAudio
-    # skips them when None/absent, so keep them off the GPU unless configured.
+    # Rankers (one loads the official facebook/sam-audio-judge) and the span predictor
+    # are ~4.4B of small's 5.8B params and are built in SAMAudio.__init__. They are
+    # unused with one candidate and no span prediction, so skip them via config
+    # overrides; they are not in the checkpoint, so loading stays strict.
+    overrides: dict[str, None] = {}
     if settings.sam_audio_reranking_candidates == 1:
-        model.visual_ranker = model.text_ranker = None
-    if not settings.sam_audio_predict_spans and hasattr(model, "span_predictor"):
-        del model.span_predictor
+        overrides.update(visual_ranker=None, text_ranker=None)
+    if not settings.sam_audio_predict_spans:
+        overrides["span_predictor"] = None
+    model = sam.SAMAudio.from_pretrained(settings.sam_audio_model, **overrides)
     model = model.to(settings.sam_audio_device).eval()
     processor = sam.SAMAudioProcessor.from_pretrained(settings.sam_audio_model)
     return torch, model, processor
