@@ -1,4 +1,6 @@
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+# Ubuntu 24.04 ships ffmpeg 6.1; 22.04 has 4.4, whose concat demuxer lacks the
+# `option` directive SAM3 mask encoding uses.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 COPY --from=ghcr.io/astral-sh/uv:0.11.14 /uv /usr/local/bin/uv
 # gcc/libc6-dev: triton compiles GPU kernels at runtime (SAM Audio Judge).
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg git gcc libc6-dev \
