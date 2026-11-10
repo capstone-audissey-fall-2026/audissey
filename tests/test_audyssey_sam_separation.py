@@ -78,29 +78,23 @@ class SamSeparationTests(unittest.TestCase):
     def test_model_loaded_once(self):
         self.separate()
         self.separate()
-        self.sam.SAMAudio.from_pretrained.assert_called_once_with('facebook/sam-audio-large-tv')
+        self.sam.SAMAudio.from_pretrained.assert_called_once()
         self.sam.SAMAudioProcessor.from_pretrained.assert_called_once_with('facebook/sam-audio-large-tv')
         self.model.to.assert_called_once_with('cpu')
         self.model.eval.assert_called_once_with()
 
-    def test_unused_rankers_and_span_predictor_dropped_before_device(self):
-        moved = []
-        self.model.to.side_effect = lambda device: moved.append(
-            (self.model.visual_ranker, self.model.text_ranker, hasattr(self.model, 'span_predictor'))
-        ) or self.model
+    def test_unused_rankers_and_span_predictor_never_built(self):
+        # SAMAudio builds its rankers (incl. the official Judge) in __init__, so they
+        # must be disabled through config overrides, not removed after loading.
         self.separate()
-        self.assertEqual(moved, [(None, None, False)])
+        self.sam.SAMAudio.from_pretrained.assert_called_once_with(
+            'facebook/sam-audio-large-tv', visual_ranker=None, text_ranker=None, span_predictor=None
+        )
 
-    def test_rankers_and_span_predictor_kept_when_used(self):
-        self.model.to.side_effect = None
-        ranker, predictor = object(), object()
-        self.model.visual_ranker = self.model.text_ranker = ranker
-        self.model.span_predictor = predictor
+    def test_rankers_and_span_predictor_built_when_used(self):
         with patch.dict(os.environ, AUDYSSEY_SAM_AUDIO_PREDICT_SPANS='true', AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES='3'):
             self.separate()
-        self.assertIs(self.model.visual_ranker, ranker)
-        self.assertIs(self.model.text_ranker, ranker)
-        self.assertIs(self.model.span_predictor, predictor)
+        self.sam.SAMAudio.from_pretrained.assert_called_once_with('facebook/sam-audio-large-tv')
 
     def test_missing_gpu_env_message(self):
         with patch.dict(sys.modules, torch=None, sam_audio=None):
