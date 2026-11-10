@@ -91,10 +91,35 @@ class SamSeparationTests(unittest.TestCase):
             'facebook/sam-audio-large-tv', visual_ranker=None, text_ranker=None, span_predictor=None
         )
 
-    def test_rankers_and_span_predictor_built_when_used(self):
+    def test_reranking_builds_rankers_from_our_settings(self):
+        # With several candidates SAMAudio needs its rankers; point the Judge ranker at our
+        # configured Judge (official or mirror) instead of the hardcoded official repo.
         with patch.dict(os.environ, AUDYSSEY_SAM_AUDIO_PREDICT_SPANS='true', AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES='3'):
             self.separate()
-        self.sam.SAMAudio.from_pretrained.assert_called_once_with('facebook/sam-audio-large-tv')
+        self.sam.SAMAudio.from_pretrained.assert_called_once_with(
+            'facebook/sam-audio-large-tv',
+            text_ranker={'kind': 'ensemble', 'rankers': {
+                'clap': [{'kind': 'clap', 'checkpoint': None}, 5.0],
+                'judge': [{'kind': 'judge', 'checkpoint_or_model_id': 'facebook/sam-audio-judge'}, 1.0],
+            }},
+            visual_ranker=None,
+        )
+
+    def test_reranking_uses_configured_checkpoints(self):
+        env = {
+            'AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES': '4',
+            'AUDYSSEY_SAM_AUDIO_JUDGE_MODEL': 'mrfakename/sam-audio-judge',
+            'AUDYSSEY_SAM_AUDIO_CLAP_CHECKPOINT': '/ckpt/630k-best.pt',
+            'AUDYSSEY_SAM_AUDIO_IMAGEBIND_CHECKPOINT': '/ckpt/imagebind_huge.pth',
+        }
+        with patch.dict(os.environ, env):
+            self.separate()
+        kwargs = self.sam.SAMAudio.from_pretrained.call_args.kwargs
+        self.assertEqual(kwargs['text_ranker']['rankers']['clap'][0]['checkpoint'], '/ckpt/630k-best.pt')
+        self.assertEqual(kwargs['text_ranker']['rankers']['judge'][0]['checkpoint_or_model_id'], 'mrfakename/sam-audio-judge')
+        self.assertEqual(kwargs['visual_ranker'], {'kind': 'imagebind', 'checkpoint': '/ckpt/imagebind_huge.pth'})
+        self.assertIsNone(kwargs['span_predictor'])
+        self.model.separate.assert_called_once_with(self.batch, reranking_candidates=4, predict_spans=False)
 
     def test_missing_gpu_env_message(self):
         with patch.dict(sys.modules, torch=None, sam_audio=None):

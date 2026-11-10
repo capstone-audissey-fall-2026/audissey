@@ -37,7 +37,9 @@ uv run ty check --error-on-warning src/
 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv` | 분리 모델 ID |
 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge` | 필터링 모델 ID |
 | `AUDYSSEY_SAM_AUDIO_DEVICE` | `cuda` | 모델 장치 |
-| `AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES` | `1` | 분리 후보 수 (1 이상) |
+| `AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES` | `1` | 분리 후보 수 (1 이상). 2 이상이면 후보를 여러 개 만들고 ranker로 하나를 고름 |
+| `AUDYSSEY_SAM_AUDIO_CLAP_CHECKPOINT` | 빈 값 | 후보 고르기용 CLAP 체크포인트. 빈 값이면 캐시의 `lukewys/laion_clap` 630k-best |
+| `AUDYSSEY_SAM_AUDIO_IMAGEBIND_CHECKPOINT` | 빈 값 | 시각 힌트 후보 고르기용 ImageBind 체크포인트. 빈 값이면 끔 |
 | `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS` | `false` | span이 없을 때 모델의 span 예측 |
 | `AUDYSSEY_JUDGE_PASS_THRESHOLD` | `0.5` | Judge 예시 기준, 아직 실측 보정 전 |
 
@@ -61,6 +63,9 @@ dnn5(RTX A5000 24GB × 4)에서 모든 모듈을 real로 연결한 E2E를 확인
 `docker compose up` 한 번으로 main, 분리, Judge, SAM3, vLLM 컨테이너 5개가 뜨고,
 샘플 업로드 → 플래닝·검증 루프 → 분리·판정 → render까지 306초에 끝났습니다.
 Gemini 플래너와 높인 Judge 기준으로는 시각 힌트 마스크 분리와 재분리 루프까지 확인했습니다.
+sv3-a100에서는 공식 large-tv·Judge·SAM3.1과 vLLM 다섯 컨테이너를 A100 80GB 한 장에 올리고
+분리 후보 4개(`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES=4`, `AUDYSSEY_VLLM_GPU_UTIL=0.2`)로
+201초에 render까지 끝났습니다. GPU 메모리 최대 69.1GB입니다.
 실측값과 알려진 한계는
 [설계 문서](docs/superpowers/specs/2026-11-09-audyssey-skeleton-design.md#전체-e2e-실측-2026-11-10-dnn5-rtx-a5000-24gb--4)에 있습니다.
 
@@ -78,7 +83,8 @@ docker compose up
 
 main, separation, judge, grounding, vllm 다섯 컨테이너가 실행됩니다. main만 `127.0.0.1:8600`에
 연결되며 GPU 도구 포트는 호스트에 공개하지 않습니다. 원격 서버 UI는 SSH 터널로
-연결합니다. 작업은 `jobs` 볼륨에 남습니다. Compose 플래너는 기본 real이며 내부 `http://vllm:8000/v1`로
+연결합니다. 작업은 `jobs` 볼륨에 남습니다. 모든 컨테이너는 root가 아닌 uid 10001로 실행합니다.
+이전 root 이미지로 만든 `jobs` 볼륨은 쓰기 권한이 없으므로 `docker volume rm audyssey_jobs` 후 다시 만듭니다. Compose 플래너는 기본 real이며 내부 `http://vllm:8000/v1`로
 연결합니다. Python 직접 실행의 기본값은 계속 stub입니다. vLLM은
 `Qwen/Qwen2.5-VL-3B-Instruct` 캐시를 미리 준비해야 하며 GPU 기본값은 0,
 메모리 사용 비율은 0.85입니다. 다른 GPU 도구와 함께 실행할 때는
@@ -104,7 +110,7 @@ GPU 없이 Compose main만 실행하려면 `AUDYSSEY_PLANNER=stub`과 분리·�
 처음 배포되어 있다면 `docker compose pull`, 직접 빌드하려면 `docker compose build`를
 먼저 실행합니다. main 반영 또는 수동 workflow 실행 시 GHCR에 latest와 커밋 SHA
 태그를 올립니다. PR에서는 업로드하지 않습니다. 이미지가 비공개면 GHCR 읽기 권한으로
-인증해야 합니다. 이 브랜치의 Docker 빌드·GPU 실측은 sandbox 때문에 대기 중입니다.
+인증해야 합니다.
 
 ## 노트북 + RunPod
 
@@ -153,7 +159,9 @@ RunPod는 사용자가 별도로 미리 준비한 네트워크 볼륨 캐시를 
 Judge의 고정 upstream은 `sam_audio` revision을 읽으므로 그 revision도 캐시에 필요합니다.
 미러(`mrfakename/sam-audio-judge`)를 쓸 때도 `sam_audio` 브랜치의 `checkpoint.pt`가 캐시에 있어야 합니다:
 `hf_hub_download('mrfakename/sam-audio-judge', 'checkpoint.pt', revision='sam_audio')`.
-이 작업에서는 가중치를 다운로드하거나 복사하지 않았습니다.
+Judge 토크나이저는 revision 없이 `main`에서 읽으므로 `main`의 `config.json`·`tokenizer*.json`·
+`special_tokens_map.json`도 캐시에 있어야 합니다(가중치 제외 약 2MB).
+sv3 공용 캐시에는 공식 `facebook/sam-audio-large-tv`, `facebook/sam-audio-judge`(`sam_audio`·`main`), `facebook/sam3.1`이 있습니다.
 
 SAM Audio 의존성의 numpy<2 조건 때문에 GPU 도구는 별도 Python 3.12 uv 프로젝트를
 씁니다. 루트 환경과 CI에는 torch를 설치하지 않습니다.
@@ -196,8 +204,13 @@ uv run --isolated --no-project --python 3.12 --with-editable '.[ui,llm]' --with 
 
 24GB GPU에 올리기 위해 분리 어댑터는 재순위 후보가 1개이고 구간 예측을 끈 기본 설정에서
 쓰지 않는 ranker와 span predictor를 GPU에 올리지 않습니다(SAM Audio가 None을 공식 지원).
-`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES`를 2 이상으로, `AUDYSSEY_SAM_AUDIO_PREDICT_SPANS`를
-`true`로 바꾸면 해당 모듈을 함께 올리며 메모리가 크게 늘어납니다(small 전체 fp32 약 23GB).
+`AUDYSSEY_SAM_AUDIO_PREDICT_SPANS`를 `true`로 바꾸면 span predictor를 함께 올립니다.
+
+`AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES`를 2 이상으로 두면 후보를 그 수만큼 만들고
+공식 설정과 같은 앙상블(CLAP ×5 + Judge ×1)로 하나를 고릅니다. Judge ranker는
+SAM Audio 기본값(공식 repo 고정) 대신 `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL`을 씁니다.
+ImageBind 체크포인트를 주면 시각 힌트가 있는 소스는 ImageBind로 고릅니다. Compose에서는
+그 파일을 separation 컨테이너에 따로 마운트해야 합니다(sv3: `/home/common/torch/hub/checkpoints/imagebind_huge.pth`).
 
 ## 플래너를 Gemini/vLLM에 연결하기
 

@@ -92,9 +92,13 @@ services:
       - ${AUDYSSEY_VLLM_GPU_UTIL:-0.85}
       - --max-model-len
       - "8192"
+    # The official image runs as root by default; run unprivileged with a writable home.
+    user: "10001:10001"
     environment:
       HF_HUB_OFFLINE: "1"
-    volumes: ["${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface:ro"]
+      HF_HOME: /hf
+      HOME: /tmp/vllm
+    volumes: ["${HF_CACHE:-~/.cache/huggingface}:/hf:ro"]
     deploy:
       resources:
         reservations:
