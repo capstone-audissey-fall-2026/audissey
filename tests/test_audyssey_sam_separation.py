@@ -36,8 +36,8 @@ class SamSeparationTests(unittest.TestCase):
             real._load.cache_clear()
             self.addCleanup(real._load.cache_clear)
 
-    def separate(self, attempt=1):
-        return real.separate(self.mono, self.plan, Path('unused.mp4'), self.root / 'track.wav', attempt)
+    def separate(self, attempt=1, video=None):
+        return real.separate(self.mono, self.plan, video, self.root / 'track.wav', attempt)
 
     def test_separate_passes_description_and_span_anchors(self):
         self.plan.spans = [Span(start=0, end=0.001), Span(start=0.001, end=0.002)]
@@ -126,10 +126,10 @@ class SamSeparationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'SAM Audio is not installed: install the gpu/ environment'):
                 self.separate()
 
-    def test_real_separate_passes_masked_video_only_with_hint(self):
+    def test_real_separate_passes_masked_video_only_when_given(self):
         from audyssey.contracts import VisualHint
-        self.separate()
-        self.assertNotIn('masked_videos', self.processor.call_args.kwargs)
         self.plan.visual_hint = VisualHint(time=0, box=(0, 0, .5, 1), description='a')
         self.separate()
+        self.assertNotIn('masked_videos', self.processor.call_args.kwargs)
+        self.separate(video=Path('unused.mp4'))
         self.assertEqual(self.processor.call_args.kwargs['masked_videos'], ['unused.mp4'])

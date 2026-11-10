@@ -51,16 +51,17 @@ def create_tool_app(
         @app.post("/separate")
         def separate(
             mono: UploadFile,
-            video: UploadFile,
             plan: Annotated[str, Form()],
             attempt: Annotated[int, Form()],
+            video: UploadFile | None = None,
         ) -> Response:
             source_plan = parse_plan(plan)
             with TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                mono_path, video_path = root / "mono.wav", root / "video.mp4"
+                mono_path, video_path = root / "mono.wav", None
                 save_upload(mono, mono_path, limit)
-                save_upload(video, video_path, limit)
+                if video is not None:
+                    video_path = save_upload(video, root / "video.mp4", limit)
                 with _model_lock:
                     out = separation.separate(
                         mono_path, source_plan, video_path, root / "track.wav", attempt

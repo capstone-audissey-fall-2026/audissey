@@ -81,7 +81,7 @@ def _video_info(video: Path) -> dict:
 
 
 @contextmanager
-def _prompt(video: Path, hint: VisualHint, info: dict):
+def _session(resource: Path):
     torch, model = _load()
     with (
         torch.cuda.device(Settings().sam3_device),
@@ -90,47 +90,63 @@ def _prompt(video: Path, hint: VisualHint, info: dict):
     ):
         # Avoid the pinned predictor dispatcher: it passes an unsupported offload_state_to_cpu.
         state = model.init_state(
-            resource_path=str(video),
+            resource_path=str(resource),
             offload_video_to_cpu=True,
             async_loading_frames=False,
         )
         try:
-            timestamps = info["timestamps"]
-            time = Fraction(str(hint.time))
-            index = bisect_right(timestamps, time) - 1
-            if time < 0 or time >= timestamps[-1] + 1 / Fraction(info["r_frame_rate"]):
-                raise ValueError("visual hint time is outside the video")
-            if len(timestamps) != state["num_frames"]:
-                raise ValueError("SAM3 and ffmpeg decoded different frame counts")
-            x0, y0, x1, y1 = hint.box
-            _, outputs = model.add_prompt(
-                inference_state=state,
-                frame_idx=index,
-                text_str=hint.description,
-                boxes_xywh=[[x0, y0, x1 - x0, y1 - y0]],
-                box_labels=[1],
-            )
-            yield model, state, index, outputs
+            yield model, state
         finally:
             state.clear()
+
+
+def _add_prompt(model, state: dict, index: int, hint: VisualHint) -> dict:
+    x0, y0, x1, y1 = hint.box
+    _, outputs = model.add_prompt(
+        inference_state=state,
+        frame_idx=index,
+        text_str=hint.description,
+        boxes_xywh=[[x0, y0, x1 - x0, y1 - y0]],
+        box_labels=[1],
+    )
+    return outputs
 
 
 def _best(outputs: dict) -> int | None:
     return int(np.argmax(outputs["out_probs"])) if len(outputs["out_obj_ids"]) else None
 
 
+def _hint_index(info: dict, hint: VisualHint) -> int:
+    timestamps = info["timestamps"]
+    time = Fraction(str(hint.time))
+    if time < 0 or time >= timestamps[-1] + 1 / Fraction(info["r_frame_rate"]):
+        raise ValueError("visual hint time is outside the video")
+    return bisect_right(timestamps, time) - 1
+
+
 def locate(video: Path, hint: VisualHint) -> GroundResult:
-    info = _video_info(video)
-    with _model_lock, _prompt(video, hint, info) as (_, _, _, outputs):
-        best = _best(outputs)
-        if best is None:
-            return GroundResult(found=False)
-        x, y, width, height = outputs["out_boxes_xywh"][best]
-        return GroundResult(
-            found=True,
-            box=(x, y, min(1, x + width), min(1, y + height)),
-            score=float(outputs["out_probs"][best]),
+    # Only the hint frame matters: SAM3 takes an image as a one-frame video, so the
+    # whole clip is never decoded onto the GPU.
+    index = _hint_index(_video_info(video), hint)
+    with _model_lock, TemporaryDirectory() as tmp:
+        frame = Path(tmp) / "frame.png"
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(video), "-an"]
+            + ["-vf", f"select=eq(n\\,{index})", "-frames:v", "1", str(frame)],
+            check=True,
+            capture_output=True,
         )
+        with _session(frame) as (model, state):
+            outputs = _add_prompt(model, state, 0, hint)
+            best = _best(outputs)
+            if best is None:
+                return GroundResult(found=False)
+            x, y, width, height = outputs["out_boxes_xywh"][best]
+            return GroundResult(
+                found=True,
+                box=(x, y, min(1, x + width), min(1, y + height)),
+                score=float(outputs["out_probs"][best]),
+            )
 
 
 def mask_video(video: Path, hint: VisualHint, out: Path) -> Path:
@@ -160,9 +176,14 @@ def _mask_video(video: Path, hint: VisualHint, out: Path) -> Path:
     info = _video_info(video)
     fps = Fraction(info["r_frame_rate"])
     width, height = info["width"], info["height"]
+    timestamps = info["timestamps"]
+    index = _hint_index(info, hint)
     with _model_lock, TemporaryDirectory() as tmp:
         root = Path(tmp)
-        with _prompt(video, hint, info) as (model, state, index, outputs):
+        with _session(video) as (model, state):
+            if len(timestamps) != state["num_frames"]:
+                raise ValueError("SAM3 and ffmpeg decoded different frame counts")
+            outputs = _add_prompt(model, state, index, hint)
             best = _best(outputs)
             if best is not None:
                 target = outputs["out_obj_ids"][best]
@@ -202,7 +223,6 @@ def _mask_video(video: Path, hint: VisualHint, out: Path) -> Path:
             capture_output=True,
         )
         data = np.memmap(raw, dtype=np.uint8, mode="r").reshape(-1, height, width, 3)
-        timestamps = info["timestamps"]
         if len(data) != len(timestamps):
             raise ValueError("ffmpeg decoded a different frame count from ffprobe")
         manifest = ["ffconcat version 1.0"]
@@ -215,6 +235,10 @@ def _mask_video(video: Path, hint: VisualHint, out: Path) -> Path:
             )
             with (root / f"{i}.ppm").open("wb") as stream:
                 stream.write(f"P6\n{width} {height}\n255\n".encode())
+                # Keep the target and black out the rest (the paper's V*M). The pinned
+                # SAMAudioProcessor.mask_videos does the opposite (frames * (mask == 0));
+                # on sam-audio-bench speaker pairs only this direction picked the
+                # masked speaker, so do not "fix" it to match mask_videos.
                 stream.write((frame * mask[:, :, None]).tobytes())
             duration = (
                 timestamps[i + 1] - timestamps[i] if i + 1 < len(data) else 1 / fps

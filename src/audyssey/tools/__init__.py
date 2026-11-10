@@ -20,7 +20,8 @@ from audyssey.settings import Settings
 class Tools:
     plan: Callable[[Path, Path, float, list[PlanIssue]], list[SourcePlan]]
     validate_plan: Callable[[Path, Path, list[SourcePlan]], list[PlanIssue]]
-    separate: Callable[[Path, SourcePlan, Path, Path, int], Path]
+    # video: masked video for visual prompting, or None for text-only separation
+    separate: Callable[[Path, SourcePlan, Path | None, Path, int], Path]
     judge: Callable[[Path, Path, SourcePlan], FilterResult]
     locate: Callable[[Path, VisualHint], GroundResult]
     mask_video: Callable[[Path, VisualHint, Path], Path]

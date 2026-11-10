@@ -77,6 +77,14 @@ class ToolServerTests(unittest.TestCase):
         with patch('audyssey.tools.separation.stub.separate', inspect):
             self.assertEqual(self.client().post('/separate', files=self.files, data=self.data).status_code, 200)
 
+    def test_separate_without_video_passes_none(self):
+        def inspect(mono, plan, video, out, attempt):
+            self.assertIsNone(video)
+            return separate(mono, plan, video, out, attempt)
+        with patch('audyssey.tools.separation.stub.separate', inspect):
+            response = self.client().post('/separate', files={'mono': self.files['mono']}, data=self.data)
+        self.assertEqual(response.status_code, 200)
+
     def test_multi_tool_app_serves_both(self):
         with TestClient(create_tool_app(['separation', 'filtering'], 'stub', 't')) as client:
             self.assertEqual(client.get('/health').json(), {'tools': ['separation', 'filtering'], 'impl': 'stub'})
