@@ -41,7 +41,8 @@ flowchart TB
 | 분리 조건 | 텍스트 설명(필수), 구간(선택), 시각 힌트(선택: 시점, 0~1 박스, 설명) |
 | 시각 힌트 | 플래너가 화면에 보이는 소스마다 만듭니다. **기본값은 사용 안 함**(`AUDYSSEY_VISUAL_PROMPT=false`). 켜면 SAM3가 대상을 찾아 나머지를 검게 칠한 영상을 만들고, 분리할 때 함께 넣습니다 |
 | 분리 트랙 | 소스마다 1개. 원본과 길이가 같은 48kHz 모노 WAV |
-| 나머지 (residual) | 원본에서 모든 소스 트랙을 뺀 소리. 편집 없이 합치면 원본과 같습니다. `source_id="residual"`로 켜고 끄거나 음량을 바꿀 수 있습니다 |
+| 생성 트랙 | 영상 길이와 같은 샘플 수(`round(duration * 48000)`)의 48kHz 모노 WAV. 설명과 seed로 생성하며 계획 구간과 시각 힌트는 사용하지 않습니다 |
+| 나머지 (residual) | 원본에서 분리 트랙만 keep과 무관하게 뺀 소리. 생성 트랙은 빼지 않으며, 무음 영상에서는 만들지 않습니다. 분리 결과를 편집 없이 합치면 원본과 같습니다. `source_id="residual"`로 켜고 끄거나 음량을 바꿀 수 있습니다 |
 
 ## 검증과 재시도
 
@@ -58,6 +59,24 @@ flowchart TB
 주요 모델은 `SourcePlan`, `VisualHint`, `PlanIssue`, `FilterResult`, `GroundResult`, `Job`, `Command`입니다.
 오디오는 파일 경로로 주고받고, 시간은 초 단위 float입니다.
 
+**생성 경로 계약** (이전 Job JSON은 기본값으로 읽습니다):
+
+| 모델 | 추가·변경 |
+|---|---|
+| `Job` | `silent: bool = False`. 오디오 스트림이 없거나 최대 진폭이 −60dBFS 미만이면 무음. 영상 길이의 0 오디오·모노·파형 파일을 만듭니다 |
+| `Source` | `origin: "separated" \| "generated" = "separated"`, `replaces: str | None = None` |
+| `SourceStatus` | `skipped` 추가. 무음 영상의 대사는 트랙 없이 건너뛰며 `dialogue is not generated`를 기록 |
+| `Command` | `Generate(source_id, description?)` 추가, `AddSource.method: "separate" \| "generate" = "separate"` 추가 |
+
+유음 업로드는 기존 분리 흐름을 돌리고, 생성은 명령을 받을 때만 합니다. 무음 업로드는 플래닝·검증 후 비대사 소스를 생성합니다.
+`generate`가 분리 소스를 가리키면 `<원래 이름> (generated)` 소스를 만들고 원래 소스는 지우지 않고 `keep=False`로 둡니다.
+같은 분리 소스의 대체 생성 소스가 있으면 재사용합니다. 생성 소스 대상이면 그 자리에서 설명을 바꾸고 다시 생성합니다.
+`attempts`는 누적되며 seed는 `AUDYSSEY_SELVA_SEED + attempts - 1`입니다. 루프마다 최대 `1 + MAX_GENERATION_RETRIES`번 시도하고, 합격 시 멈추며 최고 `text_margin` 결과만 남깁니다(없으면 0, 동점이면 최신).
+단계 키는 `generate:<id>`, `score:<id>`이고, 각 시도의 점수는 score 메시지와 LangSmith에 남깁니다. 채점은 기존 `FilterResult`를 씁니다.
+형제 계획은 대사·자기 자신·자기가 대체하는 원본을 제외하고, 대체 생성에는 원래 분리 stem을 참조로 전달합니다.
+생성 뒤에는 residual을 다시 계산하지 않습니다. 원래 분리 stem을 다시 켜면 두 stem 모두 합쳐집니다.
+원본 코덱 패딩과 생성 길이가 다르면 믹스에 더할 때만 겹치는 길이를 사용하며, 내보내는 stem 길이는 유지합니다.
+
 **도구 함수**는 `stub`, `real`, `remote` 모두 시그니처가 같습니다.
 
 ```python
@@ -67,6 +86,8 @@ separate(mono_path, plan: SourcePlan, masked_video_path | None, out_path, attemp
 judge(mono_path, track_path, plan: SourcePlan) -> FilterResult
 locate(video: Path, hint: VisualHint) -> GroundResult
 mask_video(video: Path, hint: VisualHint, out: Path) -> Path
+generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path
+score_generation(track: Path, plan: SourcePlan, siblings: list[SourcePlan], reference_stem: Path | None) -> FilterResult
 render(job: Job, job_dir, include_residual_stem: bool) -> RenderOutput
 ```
 
@@ -75,8 +96,11 @@ render(job: Job, job_dir, include_residual_stem: bool) -> RenderOutput
 
 ```
 keep / drop(source_id)            set_gain(source_id, 0.0~2.0)     set_pitch(source_id, -12~+12)
-reseparate(source_id, description?, spans?)   add_source(plan)     render(include_residual_stem)
+reseparate(source_id, description?, spans?)   generate(source_id, description?)
+add_source(plan, method="separate")          render(include_residual_stem)
 ```
+
+대사·residual 대상 `generate`, 무음 영상의 `add_source(method="separate")`, 대사 `add_source(method="generate")`, 생성 소스·무음 영상의 `reseparate`는 거절합니다(API 400). 기존 명령 형식·검증 오류는 422, 없는 소스는 404입니다. `generate`도 실행 잠금을 사용해 바쁜 작업에는 409를 돌려줍니다.
 
 **main 서버 API.** UI는 아래 API만 쓰면 됩니다.
 
@@ -85,7 +109,7 @@ POST /api/jobs                    multipart(video) → Job (업로드 후 자동
 GET  /api/jobs                    → Job 요약 목록
 GET  /api/jobs/{id}               → Job
 GET  /api/jobs/{id}/events        SSE: 상태가 바뀔 때마다 Job 전송
-POST /api/jobs/{id}/commands      Command → Job | 409(실행 중) | 422(형식 오류)
+POST /api/jobs/{id}/commands      Command → Job | 400(생성 경로 거절) | 409(실행 중) | 422(형식 오류)
 GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파일
 ```
 
@@ -97,7 +121,11 @@ POST /separate  multipart mono, plan, attempt (+ video)     → WAV   video는 �
 POST /judge     multipart mono, track, plan                  → FilterResult
 POST /locate    multipart video, hint                        → GroundResult
 POST /mask      multipart video, hint                        → MP4
+POST /generate  multipart video, plan, seed                   → WAV
+POST /score     multipart track, plan, siblings (+ reference) → FilterResult
 ```
+
+생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON, `reference`는 선택 WAV 파일입니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 PR 2에서 연결합니다.
 
 ## 코드 위치
 
@@ -117,6 +145,7 @@ src/audyssey/
     separation/  stub.py real.py remote.py   separate (SAM Audio)
     filtering/   stub.py real.py remote.py   judge (SAM Audio Judge)
     grounding/   stub.py real.py remote.py   locate, mask_video (SAM3)
+    generation/  stub.py remote.py           generate, score_generation (real은 PR 2)
     editing/     render.py                   residual, pitch, render
 gpu/             GPU 도구 전용 uv 프로젝트 (Python 3.12, numpy 1.26, torch cu128)
 docker/          app.Dockerfile, tools.Dockerfile

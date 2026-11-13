@@ -1,6 +1,7 @@
 # Audyssey
 
 짧은 영상(10초 안팎)의 오디오를 소리 나는 대상별 트랙으로 나눕니다.
+유음 영상은 분리 뒤 원하는 효과음·음악·환경음을 생성으로 바꾸거나 추가할 수 있고, 무음 영상은 대사를 제외한 소스를 자동 생성합니다.
 트랙을 들어 보고 켜고 끄거나 음량·피치를 바꾼 뒤 다시 합쳐, 편집된 영상과 트랙별 오디오(stems)를 내보냅니다.
 
 **현재 단계: 뼈대(skeleton).** 실제 모델로 처음부터 끝까지 도는 것까지 확인했고, 품질은 아직 보지 않았습니다.
@@ -25,16 +26,21 @@ flowchart LR
   PRE --> PLAN["플래닝<br/>plan"]
   PLAN --> CHECK{"플래닝 검증<br/>형식 · validate_plan<br/>(시각 힌트 켜면 SAM3 locate)"}
   CHECK -- "문제 있음, 한도 전" --> PLAN
-  CHECK -- "통과 또는 한도 도달" --> SRC
+  CHECK -- "통과 또는 한도 도달" --> MODE{"유음 / 무음"}
+  MODE -- "유음" --> MASK
+  MODE -- "무음 · 대사 제외" --> GEN
   subgraph SRC["소스마다"]
     MASK["그라운딩 마스크<br/>시각 힌트를 켰을 때만"] --> SEP["분리<br/>separate"]
     SEP --> JUDGE{"필터링 검증<br/>judge"}
     JUDGE -- "불합격, 한도 전" --> SEP
+    GEN["생성<br/>generate"] --> SCORE{"생성 채점<br/>score_generation"}
+    SCORE -- "불합격, 한도 전" --> GEN
   end
-  SRC --> RES["나머지 계산<br/>residual"]
+  SRC --> RES["나머지 계산<br/>분리 stem만 · 무음은 생략"]
   RES --> TL["타임라인"]
   TL -- "keep · drop · 음량 · 피치" --> TL
-  TL -- "reseparate · add_source<br/>그 소스만" --> SRC
+  TL -- "reseparate · add_source(separate)" --> MASK
+  TL -- "generate · add_source(generate)" --> GEN
   TL -- "render" --> OUT["편집된 MP4<br/>mix WAV · stems"]
 ```
 
@@ -59,6 +65,7 @@ flowchart LR
 - **플래닝과 분리 뒤에 검증**이 있고, 실패하면 정해진 횟수만큼 다시 합니다.
 - **main 서버는 GPU를 쓰지 않습니다.** 모델은 도구 서버(SAM Audio, Judge, SAM3)와 플래너 LLM(Gemini 또는 vLLM)을 API로 부릅니다.
 - **도구마다 `stub`(가짜), `real`(직접 실행), `remote`(다른 서버 호출)를 고를 수 있습니다.** 그래서 내 모듈만 실제 모델로 돌리고 나머지는 stub으로 둘 수 있습니다.
+- **생성은 현재 stub/remote로 흐름을 검증합니다.** real SelVA·SelSync와 생성 GPU 환경·배포는 PR 2에서 연결합니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
 - **시각 힌트는 기본으로 꺼져 있습니다.** 분리는 텍스트 설명과 구간으로 합니다.
 
 용어, 검증 규칙, 함수 시그니처, API, 코드 위치는 [docs/architecture.md](docs/architecture.md)에 있습니다.
