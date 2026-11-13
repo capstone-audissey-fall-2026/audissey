@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 from copy import deepcopy
 from functools import cache
 from importlib import import_module
@@ -187,7 +188,13 @@ def _load_clap():
     _require_offline()
     torch = import_module("torch")
     hub = import_module("huggingface_hub")
-    clap_module = import_module("laion_clap")
+    # CLAP 1.1.5 parses training flags at import; Audyssey parsed its CLI already.
+    argv = sys.argv
+    try:
+        sys.argv = argv[:1]
+        clap_module = import_module("laion_clap")
+    finally:
+        sys.argv = argv
     checkpoint = hub.hf_hub_download(
         repo_id="lukewys/laion_clap", filename="630k-best.pt", local_files_only=True
     )
