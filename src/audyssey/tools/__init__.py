@@ -27,7 +27,7 @@ class Tools:
     mask_video: Callable[[Path, VisualHint, Path], Path]
     generate: Callable[[Path, SourcePlan, Path, int], Path]
     score_generation: Callable[
-        [Path, SourcePlan, list[SourcePlan], Path | None], FilterResult
+        [Path, SourcePlan, list[SourcePlan], Path | None, list[Path]], FilterResult
     ]
 
 

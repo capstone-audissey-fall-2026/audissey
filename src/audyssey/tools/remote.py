@@ -4,7 +4,7 @@ import httpx
 def post(
     url: str,
     path: str,
-    files: dict[str, tuple[str, bytes, str]],
+    files: dict[str, tuple[str, bytes, str]] | list[tuple[str, tuple[str, bytes, str]]],
     data: dict[str, str],
     token: str,
     timeout: float,

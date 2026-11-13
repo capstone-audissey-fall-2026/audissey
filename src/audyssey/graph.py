@@ -148,6 +148,13 @@ def generate_source(job: Job, source: Source, ctx: Context) -> None:
                 directory / reference.track_path
                 if reference and reference.track_path
                 else None,
+                [
+                    directory / other.track_path
+                    for other in job.sources
+                    if other.origin == "separated" and other.track_path
+                ]
+                if reference and reference.track_path
+                else [],
             )
             messages.append(
                 f"attempt {source.attempts}: correct={result.scores.get('text_correct')} "
