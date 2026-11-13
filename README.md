@@ -81,15 +81,14 @@ flowchart LR
 | 상황 | 필요한 것 | 안내 |
 |---|---|---|
 | GPU 없이 흐름만 확인 | Python 3.11+, uv, ffmpeg | 위 "바로 해 보기" |
-| GPU 서버 한 대에서 전부 실행 | Docker, NVIDIA Container Toolkit, 가중치 캐시 | [Docker Compose](docs/running.md#gpu-서버-한-대-docker-compose) |
-| 노트북 + RunPod GPU | 노트북 Docker, RunPod Pod 1개 (48GB 이상) | [RunPod](docs/running.md#노트북--runpod) |
+| **실제 모델로 전체 실행 (처음이면 여기부터)** | HF 승인, 팀 HF 조직 가입, 읽기 토큰 | [실제 모델로 실행하기](docs/running.md#실제-모델로-실행하기-팀원용) |
+| ㄴ 내 GPU 서버에서 | Docker, NVIDIA Container Toolkit, GPU 1장(80GB면 한 장에 전부) | [A. 내 GPU 서버](docs/running.md#a-내-gpu-서버에서-docker-compose) |
+| ㄴ 노트북 + RunPod | 노트북 Docker, RunPod Pod 1개(48GB 이상), 네트워크 볼륨 | [B. 노트북 + RunPod](docs/running.md#b-노트북--runpod) |
 | 내 모듈만 GPU로 개발 | GPU, `gpu/` 환경 | [모듈 개발](docs/running.md#내-모듈만-gpu로-개발) |
 | 플래너를 Gemini나 vLLM으로 | API 키 또는 vLLM 주소 | [플래너 연결](docs/running.md#플래너-연결-gemini-vllm) |
 | 실행 기록 보기 | LangSmith 키 | [LangSmith](docs/running.md#langsmith) |
-| 모델 가중치 받기 | Hugging Face 승인과 토큰 | [가중치 준비](docs/running.md#가중치-준비) |
 
-실제 모델을 쓰려면 먼저 Hugging Face에서 `facebook/sam-audio-large-tv`, `facebook/sam-audio-judge`, `facebook/sam3.1` 접근 승인을 받아야 합니다.
-모든 설정 값은 [설정 표](docs/running.md#설정-환경변수)에 있습니다.
+막히면 [자주 막히는 곳](docs/running.md#자주-막히는-곳)을, 모든 설정 값은 [설정 표](docs/running.md#설정-환경변수)를 봅니다.
 
 ## 작업 규칙
 
