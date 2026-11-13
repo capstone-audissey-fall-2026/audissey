@@ -34,4 +34,4 @@ ENV LD_LIBRARY_PATH="/app/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/lib:
 RUN useradd --create-home --uid 10001 app
 USER app
 EXPOSE 8700
-CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--tool", "grounding", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
+CMD ["audyssey", "tool-server", "--tool", "separation", "--tool", "filtering", "--tool", "grounding", "--tool", "generation", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]

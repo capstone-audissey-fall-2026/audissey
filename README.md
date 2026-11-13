@@ -56,9 +56,8 @@ flowchart LR
     T1["분리<br/>SAM Audio"]
     T2["필터링<br/>SAM Audio Judge"]
     T3["그라운딩<br/>SAM3.1"]
+    T4["생성<br/>SelVA FT + SelSync · CLAP"]
   end
-  MAIN -- "HTTP + Bearer 토큰 :8700" --> GEN["생성 · audyssey-generation · GPU<br/>SelVA FT + SelSync · CLAP"]
-  GEN -. "읽기 전용 · 오프라인" .-> HF
   TOOLS -. "읽기 전용 · 오프라인" .-> HF[("HF 캐시<br/>가중치")]
   MAIN -. "LANGSMITH_*" .-> LS["LangSmith"]
 ```
@@ -67,7 +66,7 @@ flowchart LR
 - **플래닝과 분리 뒤에 검증**이 있고, 실패하면 정해진 횟수만큼 다시 합니다.
 - **main 서버는 GPU를 쓰지 않습니다.** 모델은 도구 서버(SAM Audio, Judge, SAM3, SelVA·SelSync)와 플래너 LLM(Gemini 또는 vLLM)을 API로 부릅니다.
 - **도구마다 `stub`(가짜), `real`(직접 실행), `remote`(다른 서버 호출)를 고를 수 있습니다.** 그래서 내 모듈만 실제 모델로 돌리고 나머지는 stub으로 둘 수 있습니다.
-- **생성 real은 SelVA FT·SelSync + CLAP 채점입니다.** 전용 `gen/` 환경과 `audyssey-generation` 이미지로 분리합니다. Docker 빌드와 GPU 실측·E2E는 운영자 확인 전입니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
+- **생성 real은 SelVA FT·SelSync + CLAP 채점입니다.** 분리·Judge·그라운딩과 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
 - **시각 힌트는 기본으로 꺼져 있습니다.** 분리는 텍스트 설명과 구간으로 합니다.
 
 용어, 검증 규칙, 함수 시그니처, API, 코드 위치는 [docs/architecture.md](docs/architecture.md)에 있습니다.
@@ -82,9 +81,9 @@ flowchart LR
 | 상황 | 필요한 것 | 안내 |
 |---|---|---|
 | GPU 없이 흐름만 확인 | Python 3.11+, uv, ffmpeg | 위 "바로 해 보기" |
-| GPU 서버 한 대에서 전부 실행 | Docker, NVIDIA Container Toolkit, 가중치 캐시 (6개 구성 GPU 검증 전) | [Docker Compose](docs/running.md#gpu-서버-한-대-docker-compose) |
+| GPU 서버 한 대에서 전부 실행 | Docker, NVIDIA Container Toolkit, 가중치 캐시 | [Docker Compose](docs/running.md#gpu-서버-한-대-docker-compose) |
 | 노트북 + RunPod GPU | 노트북 Docker, RunPod Pod 1개 (48GB 이상) | [RunPod](docs/running.md#노트북--runpod) |
-| 내 모듈만 GPU로 개발 | GPU, `gpu/` 또는 생성용 `gen/` 환경 | [모듈 개발](docs/running.md#내-모듈만-gpu로-개발) |
+| 내 모듈만 GPU로 개발 | GPU, `gpu/` 환경 | [모듈 개발](docs/running.md#내-모듈만-gpu로-개발) |
 | 플래너를 Gemini나 vLLM으로 | API 키 또는 vLLM 주소 | [플래너 연결](docs/running.md#플래너-연결-gemini-vllm) |
 | 실행 기록 보기 | LangSmith 키 | [LangSmith](docs/running.md#langsmith) |
 | 모델 가중치 받기 | Hugging Face 승인과 토큰 | [가중치 준비](docs/running.md#가중치-준비) |

@@ -86,10 +86,11 @@ services:
               capabilities: [gpu]
 
   generation:
-    image: ghcr.io/capstone-audissey-fall-2026/audyssey-generation:latest
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest
     build:
       context: .
-      dockerfile: docker/generation.Dockerfile
+      dockerfile: docker/tools.Dockerfile
+    command: ["audyssey", "tool-server", "--tool", "generation", "--impl", "real", "--host", "0.0.0.0", "--port", "8700"]
     env_file: .env
     environment:
       HF_HOME: /hf

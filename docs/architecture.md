@@ -126,7 +126,7 @@ POST /generate  multipart video, plan, seed                   → WAV
 POST /score     multipart track, plan, siblings → FilterResult
 ```
 
-생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON입니다. 생성 track만 업로드하며 업로드 이름은 저장 경로로 사용하지 않습니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 SelVA FT·SelSync와 CLAP 채점으로 구현하며 별도 `gen/` 환경에서 실행합니다.
+생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON입니다. 생성 track만 업로드하며 업로드 이름은 저장 경로로 사용하지 않습니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 SelVA FT·SelSync와 CLAP 채점으로 구현하며 다른 GPU 도구와 같은 `gpu/` 환경에서 실행합니다.
 
 ## 코드 위치
 

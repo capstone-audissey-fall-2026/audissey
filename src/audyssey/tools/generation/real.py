@@ -192,7 +192,13 @@ def _load_clap():
         repo_id="lukewys/laion_clap", filename="630k-best.pt", local_files_only=True
     )
     clap = clap_module.CLAP_Module(enable_fusion=False, device=Settings().selva_device)
-    clap.load_ckpt(checkpoint)
+    # torch>=2.6 loads weights_only; 630k-best.pt also pickles numpy scalars (epoch
+    # metadata). Allow exactly those instead of turning weights_only off.
+    scalar = import_module("numpy._core.multiarray").scalar
+    with torch.serialization.safe_globals(
+        [(scalar, "numpy.core.multiarray.scalar"), np.dtype, type(np.dtype("f8"))]
+    ):
+        clap.load_ckpt(checkpoint)
     clap.eval()
     return torch, clap
 
