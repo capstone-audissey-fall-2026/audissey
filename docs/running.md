@@ -13,18 +13,64 @@ uv run audyssey serve
 - 모든 도구가 stub이고, 두 검증 루프가 한 번씩 돕니다.
 - 개발용 화면에서 재생, 켜고 끄기, 음량, 피치, 설명을 고쳐 다시 분리, 소스 추가, 합치기를 해 볼 수 있습니다.
 - 편집 없이 합친 WAV는 원본과 수치 오차 범위에서 같습니다.
+- 끌 때는 그 터미널에서 Ctrl+C를 누릅니다. 작업 파일은 `work/jobs`에 남습니다.
+- 8600 포트를 이미 쓰고 있으면 `uv run audyssey serve --port 8601`처럼 바꿉니다.
+
+**stub이 하는 일**: 결과는 가짜이므로 품질 평가에는 쓰지 않습니다.
+
+| 도구 | stub 동작 |
+|---|---|
+| 플래너 | 고정된 소스 4개(대사 2, 효과음 2)를 영상 길이 비율로 냄. 검증에서 하나를 지적받아 한 번 다시 계획 |
+| 분리 | 계획 구간의 원본 오디오를 그대로 잘라 냄 |
+| Judge | `character_a`를 한 번 불합격시켜 재분리 루프를 돌게 함 |
+| 그라운딩 | 시각 힌트를 켰을 때만 호출됨. 힌트 상자를 그대로 고정 마스크로 씀 (추적 없음) |
+
+**일부만 실제로 바꾸기**: 바꾸고 싶은 것만 환경변수로 지정하고 나머지는 stub으로 둡니다.
+- 플래너만 실제로 (GPU 불필요): 아래 [플래너 연결](#플래너-연결-gemini-vllm)의 Gemini 설정에 `AUDYSSEY_PLANNER=real`
+- 내 GPU 모듈만 실제로: [내 모듈만 GPU로 개발](#내-모듈만-gpu로-개발)
+
+코드를 고친 뒤에는 [로컬 검사](contributing.md#로컬-검사)(ruff, ty, 단위 테스트)를 돌립니다. 단위 테스트도 GPU 없이 돕니다.
 
 ## GPU 서버 한 대 (Docker Compose)
 
+A100 80GB급 한 장이면 5개 컨테이너가 모두 올라갑니다(기본 설정 기준 최대 약 50~70GB, [실측](status.md)).
+
+**1. 준비 (처음 한 번)**
 ```bash
 cp .env.example .env      # .env는 커밋하지 않음
-# .env에서 AUDYSSEY_TOOL_TOKEN을 긴 임의 값으로, HF_CACHE를 가중치 캐시 경로로 바꿈
-docker compose pull       # 직접 빌드하려면 docker compose build
-docker compose up
-# http://localhost:8600 (원격 서버라면 SSH 터널: ssh -L 8600:localhost:8600 <서버>)
+# .env에서 AUDYSSEY_TOOL_TOKEN을 긴 임의 값으로, HF_CACHE를 가중치 캐시 경로로,
+# AUDYSSEY_*_GPU를 쓸 GPU 번호로 바꿈 (공용 서버라면 nvidia-smi로 비어 있는 GPU 확인)
+```
+
+**2. 띄우기**
+```bash
+docker compose pull       # 새 이미지 받기 (main 머지 때마다 갱신됨). 직접 빌드하려면 docker compose build
+docker compose up -d      # 백그라운드로 실행
+docker compose logs -f vllm   # "Application startup complete"가 뜨면 준비 끝 (약 1~2분). Ctrl+C는 로그 보기만 멈춤
 ```
 
 main, separation, judge, grounding, vllm 컨테이너 5개가 뜹니다.
+플래너를 vLLM 대신 Gemini로 쓰려면 `.env`에 `GOOGLE_API_KEY`를 넣고 vLLM 없이 띄웁니다.
+```bash
+AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
+AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
+docker compose up -d main separation judge grounding
+```
+
+**3. 접속**
+- 서버에서: http://localhost:8600
+- 원격 서버라면 노트북에서 SSH 터널을 열고 같은 주소로 접속합니다: `ssh -L 8600:localhost:8600 <서버>`
+- 분리·Judge·그라운딩 모델은 첫 요청 때 GPU에 올라가서 첫 작업만 1~2분 더 걸립니다. 그다음부터는 컨테이너를 내릴 때까지 올라간 채로 재사용합니다.
+- 진행 로그: `docker compose logs -f main separation judge`
+
+**4. 내리기**
+```bash
+docker compose down       # 컨테이너를 지우고 GPU 메모리를 돌려줌
+nvidia-smi                # 메모리가 비었는지 확인
+```
+- `up -d`로 띄웠으면 Ctrl+C로는 꺼지지 않습니다. 반드시 `docker compose down`을 실행합니다.
+- 작업 결과(`jobs` 볼륨)와 이미지는 남습니다. 다시 띄우면 이전 작업이 그대로 보입니다.
+- 빌린 GPU라면 내린 뒤 바로 반납합니다.
 
 **접속과 보안**
 - 호스트에는 main의 `127.0.0.1:8600`만 열립니다.
@@ -41,7 +87,7 @@ main, separation, judge, grounding, vllm 컨테이너 5개가 뜹니다.
 - 컨테이너는 일반 사용자(uid 10001)로 실행됩니다. 예전 root 이미지로 만든 볼륨은 쓰기 권한이 없으니 `docker volume rm audyssey_jobs` 후 다시 띄웁니다.
 
 **그 밖에**
-- 플래너 기본값은 Compose 안의 vLLM(`Qwen/Qwen2.5-VL-3B-Instruct`)입니다. Gemini를 쓰면 vLLM 없이 `docker compose up main separation judge grounding`으로 띄웁니다.
+- 플래너 기본값은 Compose 안의 vLLM(`Qwen/Qwen2.5-VL-3B-Instruct`)입니다.
 - GPU 없이 main만 띄우려면 `AUDYSSEY_PLANNER=stub`과 도구 stub(또는 원격 주소)을 설정하고 `docker compose up main`을 실행합니다.
 - sv3-a100에서는 `HF_CACHE=/home/common/huggingface`를 씁니다. 이 서버의 기본 Docker 빌드 엔진은 설정 문제로 실패하므로 `docker buildx --builder <docker-container 빌더>`로 빌드합니다.
 
