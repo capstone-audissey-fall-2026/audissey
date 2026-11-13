@@ -456,3 +456,99 @@ class GraphTests(unittest.TestCase):
         self.assertTrue(all(s.origin == "separated" for s in job.sources))
         generate.assert_not_called()
         score.assert_not_called()
+
+    def test_generate_replaces_separated_source(self):
+        from audyssey.contracts import Generate
+        job = graph.analyze(self.job, self.ctx)
+        original = job.sources[2]
+        path = original.track_path
+        graph.handle_command(job, Generate(source_id=original.id), self.ctx)
+        generated = job.sources[-1]
+        self.assertEqual((generated.origin, generated.replaces, generated.plan.name), ("generated", original.id, original.plan.name + " (generated)"))
+        self.assertFalse(original.keep)
+        self.assertEqual(original.track_path, path)
+        self.assertEqual(generated.status, "done")
+
+    def test_generate_twice_reuses_replacement(self):
+        from audyssey.contracts import Generate
+        from unittest.mock import Mock
+        job = graph.analyze(self.job, self.ctx)
+        generate = Mock(wraps=self.ctx.tools.generate)
+        self.ctx.tools = replace(self.ctx.tools, generate=generate)
+        graph.handle_command(job, Generate(source_id="s3"), self.ctx)
+        replacement = job.sources[-1]
+        graph.handle_command(job, Generate(source_id="s3"), self.ctx)
+        self.assertEqual(len(job.sources), 4)
+        self.assertIs(job.sources[-1], replacement)
+        self.assertEqual([c.args[3] for c in generate.call_args_list], [42, 43])
+        self.assertEqual(replacement.attempts, 2)
+
+    def test_generate_regenerates_generated_source(self):
+        from audyssey.contracts import Generate
+        job = graph.analyze(self.job, self.ctx)
+        graph.handle_command(job, Generate(source_id="s3"), self.ctx)
+        source = job.sources[-1]
+        previous = source.attempts
+        graph.handle_command(job, Generate(source_id=source.id, description="new sound"), self.ctx)
+        self.assertEqual(source.plan.description, "new sound")
+        self.assertGreater(source.attempts, previous)
+
+    def test_generate_does_not_change_residual(self):
+        from audyssey.contracts import Generate
+        job = graph.analyze(self.job, self.ctx)
+        residual = self.directory / job.residual.path
+        before, modified = residual.read_bytes(), residual.stat().st_mtime_ns
+        graph.handle_command(job, Generate(source_id="s3"), self.ctx)
+        graph.handle_command(job, Keep(source_id="s3"), self.ctx)
+        self.assertEqual(residual.read_bytes(), before)
+        self.assertEqual(residual.stat().st_mtime_ns, modified)
+        self.assertTrue(job.sources[2].keep and job.sources[-1].keep)
+        graph.handle_command(job, Render(), self.ctx)
+        original = read_wav(self.directory / job.audio_path)
+        generated = read_wav(self.directory / job.sources[-1].track_path)
+        expected = original.copy()
+        expected[:len(generated)] += generated
+        np.testing.assert_allclose(read_wav(self.directory / job.outputs.mix_wav), expected, atol=1e-6)
+
+    def test_generation_commands_reject_invalid_targets_without_mutation(self):
+        from audyssey.contracts import Generate
+        job = graph.analyze(self.job, self.ctx)
+        commands = [Generate(source_id="s1"), Generate(source_id="residual"),
+                    AddSource(method="generate", plan=SourcePlan(name="voice", kind="dialogue", description="voice"))]
+        for command in commands:
+            snapshot = job.model_dump_json()
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                graph.handle_command(job, command, self.ctx)
+            self.assertEqual(job.model_dump_json(), snapshot)
+        graph.handle_command(job, Generate(source_id="s3"), self.ctx)
+        snapshot = job.model_dump_json()
+        with self.assertRaises(ValueError):
+            graph.handle_command(job, Reseparate(source_id=job.sources[-1].id), self.ctx)
+        self.assertEqual(job.model_dump_json(), snapshot)
+        job.silent = True
+        for command in [Reseparate(source_id="s3"), AddSource(plan=SourcePlan(name="new", kind="sfx", description="sound"))]:
+            snapshot = job.model_dump_json()
+            with self.assertRaises(ValueError):
+                graph.handle_command(job, command, self.ctx)
+            self.assertEqual(job.model_dump_json(), snapshot)
+
+    def test_add_source_generate(self):
+        from unittest.mock import Mock
+        job = graph.analyze(self.job, self.ctx)
+        before = (self.directory / job.residual.path).read_bytes()
+        separate = Mock(side_effect=AssertionError("generation must not separate"))
+        self.ctx.tools = replace(self.ctx.tools, separate=separate)
+        graph.handle_command(job, AddSource(method="generate", plan=SourcePlan(name="extra", kind="sfx", description="rain")), self.ctx)
+        self.assertEqual(job.sources[-1].origin, "generated")
+        self.assertEqual(job.sources[-1].status, "done")
+        self.assertIsNone(job.sources[-1].replaces)
+        separate.assert_not_called()
+        self.assertEqual((self.directory / job.residual.path).read_bytes(), before)
+
+    def test_generate_rejects_empty_description_without_mutation(self):
+        from audyssey.contracts import Generate
+        job = graph.analyze(self.job, self.ctx)
+        snapshot = job.model_dump_json()
+        with self.assertRaises(ValueError):
+            graph.handle_command(job, Generate(source_id="s3", description=" "), self.ctx)
+        self.assertEqual(job.model_dump_json(), snapshot)

@@ -11,6 +11,7 @@ from audyssey.contracts import (
     AddSource,
     Command,
     Drop,
+    Generate,
     Job,
     Keep,
     PlanIssue,
@@ -539,22 +540,66 @@ def handle_command(job: Job, cmd: Command, ctx: Context) -> Job:
             raise
         update_step(job, ctx, StepStatus(key="render", status="done"))
     elif isinstance(cmd, AddSource):
+        if job.silent and cmd.method == "separate":
+            raise ValueError("silent videos only support generation")
+        if cmd.method == "generate" and cmd.plan.kind == "dialogue":
+            raise ValueError("dialogue is not generated")
         plans, issues = check_plans([cmd.plan], job.duration)
         if issues:
             raise ValueError("; ".join(i.message for i in issues))
         if any(s.plan.name == cmd.plan.name for s in job.sources):
             raise ValueError("source name already exists; use reseparate")
         number = max((int(s.id[1:]) for s in job.sources), default=0) + 1
-        source = Source(id=f"s{number}", plan=plans[0])
+        source = Source(
+            id=f"s{number}",
+            plan=plans[0],
+            origin="generated" if cmd.method == "generate" else "separated",
+        )
         job.sources.append(source)
         process_source(job, source, ctx)
-        refresh_residual(job, ctx)
+        if cmd.method == "separate":
+            refresh_residual(job, ctx)
     else:
         source = job.find_source(cmd.source_id)
         target = job.residual if cmd.source_id == "residual" else source
         if target is None:
             raise KeyError(cmd.source_id)
-        if isinstance(cmd, (Keep, Drop)):
+        if isinstance(cmd, Generate):
+            if source is None:
+                raise ValueError("residual cannot be generated")
+            if source.plan.kind == "dialogue":
+                raise ValueError("dialogue is not generated")
+            target_source = source
+            if source.origin == "separated":
+                replacement = next(
+                    (
+                        s
+                        for s in job.sources
+                        if s.origin == "generated" and s.replaces == source.id
+                    ),
+                    None,
+                )
+                target_source = replacement or Source(
+                    id=f"s{max(int(s.id[1:]) for s in job.sources) + 1}",
+                    plan=source.plan.model_copy(deep=True),
+                    origin="generated",
+                    replaces=source.id,
+                )
+            plan = target_source.plan.model_copy(deep=True)
+            if source.origin == "separated":
+                plan.name = source.plan.name + " (generated)"
+            if cmd.description is not None:
+                plan.description = cmd.description
+            _, issues = check_plans([plan], job.duration)
+            if issues:
+                raise ValueError("; ".join(i.message for i in issues))
+            target_source.plan = plan
+            if source.origin == "separated":
+                if target_source not in job.sources:
+                    job.sources.append(target_source)
+                source.keep = False
+            generate_source(job, target_source, ctx)
+        elif isinstance(cmd, (Keep, Drop)):
             target.keep = isinstance(cmd, Keep)
         elif isinstance(cmd, SetGain):
             target.gain = cmd.gain
@@ -565,6 +610,10 @@ def handle_command(job: Job, cmd: Command, ctx: Context) -> Job:
         elif isinstance(cmd, Reseparate):
             if source is None:
                 raise ValueError("residual cannot be reseparated")
+            if job.silent or source.origin == "generated":
+                raise ValueError(
+                    "generated sources and silent videos cannot be reseparated"
+                )
             plan = source.plan.model_copy(deep=True)
             if cmd.description is not None:
                 plan.description = cmd.description

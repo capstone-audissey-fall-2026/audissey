@@ -192,3 +192,39 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Audyssey dev UI", response.text)
+
+    def test_generation_command_errors_are_400(self):
+        job = self.ready()
+        for command in [
+            {"type": "generate", "source_id": "s1"},
+            {"type": "generate", "source_id": "residual"},
+            {"type": "add_source", "method": "generate", "plan": {"name": "voice", "kind": "dialogue", "description": "voice"}},
+        ]:
+            before = self.client.get(f"/api/jobs/{job['id']}").json()
+            response = self.command(job["id"], command)
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual(self.client.get(f"/api/jobs/{job['id']}").json(), before)
+        response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
+        self.assertEqual(response.status_code, 200, response.text)
+        generated = response.json()["sources"][-1]
+        response = self.command(job["id"], {"type": "reseparate", "source_id": generated["id"]})
+        self.assertEqual(response.status_code, 400, response.text)
+
+    def test_silent_separation_commands_are_400(self):
+        self.video = make_video(self.root / "silent.mp4", audio=False)
+        job = self.ready()
+        for command in [
+            {"type": "reseparate", "source_id": "s3"},
+            {"type": "add_source", "plan": {"name": "extra", "kind": "sfx", "description": "sound"}},
+        ]:
+            response = self.command(job["id"], command)
+            self.assertEqual(response.status_code, 400, response.text)
+
+    def test_generate_is_an_execution_command(self):
+        job = self.ready()
+        with self.app.state.locks[job["id"]]:
+            response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
+        self.assertEqual(response.status_code, 409, response.text)
+        response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["sources"][-1]["origin"], "generated")
