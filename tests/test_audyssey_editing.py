@@ -84,3 +84,15 @@ class EditingTests(unittest.TestCase):
         self.assertEqual(np.max(np.abs(read_wav(self.root / out.mix_wav))), 0)
         self.assertEqual(out.stems, [])
         self.assertGreater((self.root / out.video_mp4).stat().st_size, 0)
+
+    def test_generated_tracks_mix_with_original_codec_padding(self):
+        for length in [len(self.audio) - 384, len(self.audio) + 384]:
+            with self.subTest(length=length):
+                path = write_wav(self.root / "generated.wav", np.ones((length, 1)))
+                self.job.sources = [Source(id="s1", origin="generated", plan=SourcePlan(name="rain", kind="sfx", description="rain"), track_path=path.name, gain=0.5)]
+                self.job.residual.keep = False
+                out = editing.render(self.job, self.root, False)
+                expected = np.zeros_like(self.audio)
+                expected[:min(length, len(expected))] = 0.5
+                np.testing.assert_array_equal(read_wav(self.root / out.mix_wav), expected)
+                self.assertEqual(len(read_wav(self.root / out.stems[0])), length)

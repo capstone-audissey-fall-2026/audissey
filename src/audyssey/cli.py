@@ -13,6 +13,7 @@ class Tool(str, Enum):
     separation = "separation"
     filtering = "filtering"
     grounding = "grounding"
+    generation = "generation"
 
 
 app = typer.Typer()

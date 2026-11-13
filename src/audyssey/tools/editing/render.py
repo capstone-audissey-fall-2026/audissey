@@ -64,7 +64,12 @@ def render(job: Job, job_dir: Path, include_residual_stem: bool) -> RenderOutput
         data = read_wav(path) * source.gain
         stem = write_wav(stems_dir / f"{source.id}.wav", data)
         stems.append(str(stem.relative_to(job_dir)))
-        mix += data
+        if source.origin == "generated":
+            # Original codecs may decode padding beyond the video's sample count.
+            length = min(len(mix), len(data))
+            mix[:length] += data[:length]
+        else:
+            mix += data
     if job.residual.keep and job.residual.path:
         data = read_wav(job_dir / job.residual.path) * job.residual.gain
         mix += data

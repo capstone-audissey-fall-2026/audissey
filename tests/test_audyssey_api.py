@@ -48,14 +48,11 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(self.ready()["sources"]), 3)
         self.assertEqual(len(self.client.get("/api/jobs").json()), 1)
 
-    def test_upload_rejects_no_audio(self):
-        silent = make_video(self.root / "silent.mp4", audio=False)
-        response = self.client.post(
-            "/api/jobs", files={"file": ("silent.mp4", silent.read_bytes())}
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("audio stream", response.json()["detail"])
-        self.assertEqual(self.client.get("/api/jobs").json(), [])
+    def test_upload_accepts_no_audio(self):
+        self.video = make_video(self.root / "silent.mp4", audio=False)
+        job = self.ready("silent.mp4")
+        self.assertTrue(job["silent"])
+        self.assertIsNone(job["residual"]["path"])
 
     def test_upload_rejects_too_large(self):
         self.app.state.ctx.settings.max_upload_mb = len(self.video.read_bytes()) / 2 / 2**20
@@ -195,3 +192,39 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Audyssey dev UI", response.text)
+
+    def test_generation_command_errors_are_422(self):
+        job = self.ready()
+        for command in [
+            {"type": "generate", "source_id": "s1"},
+            {"type": "generate", "source_id": "residual"},
+            {"type": "add_source", "method": "generate", "plan": {"name": "voice", "kind": "dialogue", "description": "voice"}},
+        ]:
+            before = self.client.get(f"/api/jobs/{job['id']}").json()
+            response = self.command(job["id"], command)
+            self.assertEqual(response.status_code, 422, response.text)
+            self.assertEqual(self.client.get(f"/api/jobs/{job['id']}").json(), before)
+        response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
+        self.assertEqual(response.status_code, 200, response.text)
+        generated = response.json()["sources"][-1]
+        response = self.command(job["id"], {"type": "reseparate", "source_id": generated["id"]})
+        self.assertEqual(response.status_code, 422, response.text)
+
+    def test_silent_separation_commands_are_422(self):
+        self.video = make_video(self.root / "silent.mp4", audio=False)
+        job = self.ready()
+        for command in [
+            {"type": "reseparate", "source_id": "s3"},
+            {"type": "add_source", "plan": {"name": "extra", "kind": "sfx", "description": "sound"}},
+        ]:
+            response = self.command(job["id"], command)
+            self.assertEqual(response.status_code, 422, response.text)
+
+    def test_generate_is_an_execution_command(self):
+        job = self.ready()
+        with self.app.state.locks[job["id"]]:
+            response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
+        self.assertEqual(response.status_code, 409, response.text)
+        response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["sources"][-1]["origin"], "generated")

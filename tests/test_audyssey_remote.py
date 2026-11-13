@@ -26,7 +26,7 @@ class RemoteTests(unittest.TestCase):
     def setUpClass(cls):
         cls.servers = []
         cls.urls = []
-        for tool in ['separation', 'filtering', 'grounding']:
+        for tool in ['separation', 'filtering', 'grounding', 'generation']:
             listener = socket.socket()
             listener.bind(('127.0.0.1', 0))
             server = uvicorn.Server(uvicorn.Config(create_tool_app([tool], 'stub', 't'), log_level='error', ws='none'))
@@ -145,3 +145,22 @@ class RemoteTests(unittest.TestCase):
                 for call in [lambda: remote.locate(self.video, hint), lambda: remote.mask_video(self.video, hint, out)]:
                     with self.assertRaisesRegex(RuntimeError, '401'):
                         call()
+
+    def test_generation_remote_matches_stub(self):
+        from audyssey.contracts import SourcePlan
+        from audyssey.tools.generation import stub
+        plan = SourcePlan(name="sword_clash", kind="sfx", description="clashing swords")
+        sibling = SourcePlan(name="rain", kind="sfx", description="rain falling")
+        with patch.dict(os.environ, AUDYSSEY_GENERATOR="remote", AUDYSSEY_GENERATOR_URL=self.urls[3]):
+            tools = load_tools(Settings())
+            for seed in [42, 43]:
+                remote = tools.generate(self.video, plan, self.root / "remote/track.wav", seed)
+                direct = stub.generate(self.video, plan, self.root / "direct.wav", seed)
+                np.testing.assert_array_equal(read_wav(remote), read_wav(direct))
+                for reference in [None, direct]:
+                    self.assertEqual(tools.score_generation(remote, plan, [sibling], reference), stub.score_generation(direct, plan, [sibling], reference))
+            with patch.dict(os.environ, AUDYSSEY_TOOL_TOKEN="wrong-secret"):
+                for call in [lambda: tools.generate(self.video, plan, self.root / "fail.wav", 43), lambda: tools.score_generation(direct, plan, [], None)]:
+                    with self.assertRaisesRegex(RuntimeError, "401") as caught:
+                        call()
+                    self.assertNotIn("wrong-secret", str(caught.exception))

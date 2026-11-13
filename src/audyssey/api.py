@@ -7,7 +7,14 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
-from audyssey.contracts import AddSource, Job, Render, Reseparate, parse_command
+from audyssey.contracts import (
+    AddSource,
+    Generate,
+    Job,
+    Render,
+    Reseparate,
+    parse_command,
+)
 from audyssey.graph import Context, analyze, handle_command
 from audyssey.media import MediaError, check_upload
 from audyssey.settings import Settings
@@ -90,7 +97,7 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
         # Share the live job so edits made during analysis survive later saves.
         job = jobs.setdefault(job_id, snapshot)
         lock = locks.setdefault(job_id, Lock())
-        execution = isinstance(cmd, (Reseparate, AddSource, Render))
+        execution = isinstance(cmd, (Reseparate, Generate, AddSource, Render))
         if execution and not lock.acquire(blocking=False):
             raise HTTPException(409, "job is busy")
         try:

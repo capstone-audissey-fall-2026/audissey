@@ -10,9 +10,11 @@ uv run audyssey serve
 # http://127.0.0.1:8600 에서 samples/sample.mp4 업로드
 ```
 
-- 모든 도구가 stub이고, 두 검증 루프가 한 번씩 돕니다.
+- 모든 도구가 stub입니다. 유음 영상은 기존 분리·검증, 무음 영상은 대사를 건너뛰고 자동 생성·채점을 돌립니다.
 - 개발용 화면에서 재생, 켜고 끄기, 음량, 피치, 설명을 고쳐 다시 분리, 소스 추가, 합치기를 해 볼 수 있습니다.
-- 편집 없이 합친 WAV는 원본과 수치 오차 범위에서 같습니다.
+- 유음 영상을 생성·편집 없이 합친 WAV는 원본과 수치 오차 범위에서 같습니다.
+- 소스의 출처(분리/생성)를 확인하고, 비대사 분리 소스는 "생성으로 바꾸기", 생성 소스는 "다시 생성"으로 조작합니다. 소스 추가는 분리/생성을 고를 수 있으며 무음 영상은 생성만 지원합니다.
+- 무음 샘플: `ffmpeg -i samples/sample.mp4 -an -c:v copy /tmp/silent.mp4`로 만든 영상을 업로드합니다. 대사는 "대사는 생성하지 않음"으로 표시됩니다.
 - 끌 때는 그 터미널에서 Ctrl+C를 누릅니다. 작업 파일은 `work/jobs`에 남습니다.
 - 8600 포트를 이미 쓰고 있으면 `uv run audyssey serve --port 8601`처럼 바꿉니다.
 
@@ -23,6 +25,7 @@ uv run audyssey serve
 | 플래너 | 고정된 소스 4개(대사 2, 효과음 2)를 영상 길이 비율로 냄. 검증에서 하나를 지적받아 한 번 다시 계획 |
 | 분리 | 계획 구간의 원본 오디오를 그대로 잘라 냄 |
 | Judge | `character_a`를 한 번 불합격시켜 재분리 루프를 돌게 함 |
+| 생성·채점 | 설명에서 정한 주파수의 사인파를 영상 가운데 최대 1초에 넣음. `sword_clash`만 기본 seed에서 진폭 0.1로 불합격하고 다음 seed는 0.2로 합격. 나머지는 바로 합격. 형제가 없으면 margin을 생략 |
 | 그라운딩 | 시각 힌트를 켰을 때만 호출됨. 힌트 상자를 그대로 고정 마스크로 씀 (추적 없음) |
 
 **일부만 실제로 바꾸기**: 바꾸고 싶은 것만 환경변수로 지정하고 나머지는 stub으로 둡니다.
@@ -30,6 +33,15 @@ uv run audyssey serve
 - 내 GPU 모듈만 실제로: [내 모듈만 GPU로 개발](#내-모듈만-gpu로-개발)
 
 코드를 고친 뒤에는 [로컬 검사](contributing.md#로컬-검사)(ruff, ty, 단위 테스트)를 돌립니다. 단위 테스트도 GPU 없이 돕니다.
+
+**생성 remote를 GPU 없이 확인하기** (터미널 두 개):
+
+```bash
+AUDYSSEY_TOOL_TOKEN=local-test uv run audyssey tool-server --tool generation --impl stub --port 8701
+AUDYSSEY_TOOL_TOKEN=local-test AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run audyssey serve
+```
+
+real SelVA·SelSync, 생성 전용 `gen/` 환경·이미지·Compose 서비스는 PR 2에서 연결합니다. 현재 RunPod 구성은 생성 도구를 포함하지 않습니다. 별도 생성 프로세스/Pod 구성과 검증은 이후에 진행합니다.
 
 ## GPU 서버 한 대 (Docker Compose)
 
@@ -311,3 +323,20 @@ $H Qwen/Qwen2.5-VL-3B-Instruct
 
 Compose에서만 쓰는 값(`.env`): `HF_CACHE`, `AUDYSSEY_{SEPARATION,JUDGE,GROUNDING,VLLM}_GPU`, `AUDYSSEY_VLLM_MODEL`,
 `AUDYSSEY_VLLM_GPU_UTIL`, `GOOGLE_API_KEY`, `LANGSMITH_*`.
+
+**생성** (real 관련 설정은 PR 2에서 연결)
+
+| 환경변수 | 기본값 | 설명 |
+|---|---|---|
+| `AUDYSSEY_GENERATOR` / `AUDYSSEY_GENERATOR_URL` | `stub` / 빈 값 | 생성과 채점 도구. 현재 `stub`, `remote` 지원, `real`은 PR 2에서 연결. remote는 URL 필수 |
+| `AUDYSSEY_SELVA_SEED` | `42` | 첫 생성 seed. 다시 생성할 때 누적 attempts로 증가 |
+| `AUDYSSEY_MAX_GENERATION_RETRIES` | `2` | 루프마다 최대 재시도 수(0 이상). 총 시도는 1 + 이 값 |
+| `AUDYSSEY_GENERATION_MARGIN_THRESHOLD` | `0.0` | 텍스트 TargetSel 합격 임계값. 보정 전, PR 2에서 연결(stub은 진폭으로 판정) |
+| `AUDYSSEY_SELVA_BASE_MODEL` | `jnwnlee/SelVA` | 베이스 저장소, PR 2에서 연결 |
+| `AUDYSSEY_SELVA_FT_MODEL` | `sogang-audyssey/selva-ft-selsync` | 비공개 FT 저장소, PR 2에서 연결 |
+| `AUDYSSEY_SELVA_FT_GENERATOR_FILE` | `generator/S_O_s43/model_ema_step1000.pth` | FT 생성기 파일, PR 2에서 연결 |
+| `AUDYSSEY_SELVA_FT_ENCODER_FILE` | `encoder/S_O/best.pt` | SelSync 인코더 파일, PR 2에서 연결 |
+| `AUDYSSEY_SELVA_DEVICE` | `cuda` | 생성 장치, PR 2에서 연결 |
+| `AUDYSSEY_SELVA_STEPS` / `AUDYSSEY_SELVA_CFG` | `25` / `4.5` | Euler 생성 설정, PR 2에서 연결 |
+| `AUDYSSEY_SELVA_SINGLE_MAX_S` / `AUDYSSEY_SELVA_WINDOW_S` | `10` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초), PR 2에서 연결 |
+| `AUDYSSEY_GENERATION_GPU` | `0` | Compose 전용, PR 2에서 연결. 현재 Compose에는 생성 서비스 없음 |

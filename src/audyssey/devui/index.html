@@ -20,7 +20,8 @@ video {max-width: 100%} a {display: inline-block; margin: .5rem} #error {white-s
 <section aria-label="오디오 트랙"><h2>트랙</h2><div id="tracks"></div></section>
 <form id="add"><fieldset><legend>소스 추가</legend>
 <label>이름 <input name="name" required></label>
-<label>종류 <select name="kind"><option>sfx</option><option>dialogue</option><option>music</option><option>ambience</option></select></label>
+<label>방법 <select name="method"><option value="separate">분리</option><option value="generate">생성</option></select></label>
+<label>종류 <select name="kind"><option>sfx</option><option value="dialogue">dialogue</option><option>music</option><option>ambience</option></select></label>
 <label>설명 <input name="description" required></label>
 <label>시작 (초) <input name="start" type="number" min="0" step="0.01" value="0" required></label>
 <label>끝 (초) <input name="end" type="number" min="0" step="0.01" value="1" required></label>
@@ -63,11 +64,11 @@ function slider(source, title, key, min, max, step, type, field) {
 }
 function track(source, residual = false) {
   const row = element('fieldset');
-  row.append(element('legend', residual ? '나머지 (residual)' : `${source.id}: ${source.plan.name} (${source.plan.kind})`));
+  row.append(element('legend', residual ? '나머지 (residual)' : `${source.id}: ${source.plan.name} (${source.plan.kind} · ${source.origin === "generated" ? "생성" : "분리"})`));
   const path = residual ? source.path : source.track_path;
   if (path) { const audio = element('audio'); audio.controls = true; audio.src = fileUrl(path); row.append(audio); }
   if (!residual) {
-    row.append(element('p', `${source.status} · 시도 ${source.attempts}`));
+    row.append(element('p', source.status === 'skipped' ? '대사는 생성하지 않음' : `${source.status} · 시도 ${source.attempts}`));
     if (source.filter && !source.filter.passed) { const warning = element('p', source.filter.reason); warning.className = 'warning'; row.append(warning); }
   }
   const keep = element('input'); keep.type = 'checkbox'; keep.checked = source.keep;
@@ -76,16 +77,36 @@ function track(source, residual = false) {
   if (!residual) {
     row.append(slider(source, '피치 (반음)', 'pitch_semitones', -12, 12, 1, 'set_pitch', 'semitones'));
     const description = element('input'); description.value = source.plan.description;
-    const retry = element('button', '다시 분리'); retry.type = 'button'; retry.disabled = job.state === 'running';
-    retry.onclick = () => command({type:'reseparate', source_id:source.id, description:description.value});
-    row.append(label('분리 설명', description), retry);
+    row.append(label('설명', description));
+    if (source.origin === 'separated' && !job.silent) {
+      const retry = element('button', '다시 분리'); retry.type = 'button'; retry.disabled = job.state === 'running';
+      retry.onclick = () => command({type:'reseparate', source_id:source.id, description:description.value});
+      row.append(retry);
+    }
+    if (source.plan.kind !== 'dialogue') {
+      const generate = element('button', source.origin === 'generated' ? '다시 생성' : '생성으로 바꾸기');
+      generate.type = 'button'; generate.disabled = job.state === 'running';
+      generate.onclick = () => command({type:'generate', source_id:source.id, description:description.value});
+      row.append(generate);
+    }
   }
   return row;
 }
+function updateAddMethod() {
+  const form = $('add');
+  const method = form.elements.method;
+  method.querySelector('[value="separate"]').disabled = Boolean(job && job.silent);
+  if (job && job.silent) method.value = 'generate';
+  const dialogue = form.elements.kind.querySelector('[value="dialogue"]');
+  dialogue.disabled = method.value === 'generate';
+  if (dialogue.disabled && form.elements.kind.value === 'dialogue') form.elements.kind.value = 'sfx';
+}
+$('add').elements.method.onchange = updateAddMethod;
 function show(data) {
-  if (job && data.id === job.id && data.version < job.version) return;
+  if (job && data.id === job.id && data.version <= job.version) return;
   job = data;
-  $('status').textContent = `${job.id} · ${job.state} · ${job.duration.toFixed(2)}초`;
+  $('status').textContent = `${job.id} · ${job.state} · ${job.duration.toFixed(2)}초${job.silent ? " · 무음 영상: 생성만 지원" : ""}`;
+  updateAddMethod();
   if (job.error) $('error').textContent = job.error;
   $('steps').replaceChildren(...job.steps.map(step => {
     const node = element('li', `${step.key}: ${step.status} ${step.round}/${step.max_rounds} ${step.message}`);
@@ -117,7 +138,7 @@ $('add').onsubmit = event => {
   event.preventDefault();
   if (!job) return;
   const data = new FormData(event.target);
-  command({type:'add_source', plan:{name:data.get('name'), kind:data.get('kind'), description:data.get('description'), spans:[{start:Number(data.get('start')), end:Number(data.get('end'))}]}});
+  command({type:'add_source', method:data.get('method'), plan:{name:data.get('name'), kind:data.get('kind'), description:data.get('description'), spans:[{start:Number(data.get('start')), end:Number(data.get('end'))}]}});
 };
 $('render').onclick = () => command({type:'render', include_residual_stem:$('residual-stem').checked});
 $('add').querySelector('button').disabled = true;

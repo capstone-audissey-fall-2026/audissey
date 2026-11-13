@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from audyssey.contracts import FilterResult, GroundResult, SourcePlan, VisualHint
 from audyssey.settings import Settings
@@ -18,7 +18,7 @@ _model_lock = Lock()
 
 
 def create_tool_app(
-    tools: list[Literal["separation", "filtering", "grounding"]],
+    tools: list[Literal["separation", "filtering", "grounding", "generation"]],
     impl: Literal["stub", "real"],
     token: str,
 ) -> FastAPI:
@@ -35,7 +35,7 @@ def create_tool_app(
 
     @app.get("/health")
     def health() -> dict[
-        str, str | list[Literal["separation", "filtering", "grounding"]]
+        str, str | list[Literal["separation", "filtering", "grounding", "generation"]]
     ]:
         return {"tools": tools, "impl": impl}
 
@@ -113,5 +113,49 @@ def create_tool_app(
                         path, visual_hint, Path(tmp) / "mask.mp4"
                     )
                 return Response(out.read_bytes(), media_type="video/mp4")
+
+    if "generation" in tools:
+        generation = import_module(f"audyssey.tools.generation.{impl}")
+
+        @app.post("/generate")
+        def generate(
+            video: UploadFile,
+            plan: Annotated[str, Form()],
+            seed: Annotated[int, Form()],
+        ) -> Response:
+            source_plan = parse_plan(plan)
+            with TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                video_path = save_upload(video, root / "video.mp4", limit)
+                with _model_lock:
+                    out = generation.generate(
+                        video_path, source_plan, root / "track.wav", seed
+                    )
+                return Response(out.read_bytes(), media_type="audio/wav")
+
+        @app.post("/score")
+        def score(
+            track: UploadFile,
+            plan: Annotated[str, Form()],
+            siblings: Annotated[str, Form()],
+            reference: UploadFile | None = None,
+        ) -> FilterResult:
+            source_plan = parse_plan(plan)
+            try:
+                sibling_plans = TypeAdapter(list[SourcePlan]).validate_json(siblings)
+            except ValidationError:
+                raise HTTPException(422, "invalid sibling plans") from None
+            with TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                track_path = save_upload(track, root / "track.wav", limit)
+                reference_path = (
+                    save_upload(reference, root / "reference.wav", limit)
+                    if reference is not None
+                    else None
+                )
+                with _model_lock:
+                    return generation.score_generation(
+                        track_path, source_plan, sibling_plans, reference_path
+                    )
 
     return app

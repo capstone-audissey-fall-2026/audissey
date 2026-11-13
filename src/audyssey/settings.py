@@ -13,6 +13,20 @@ class Settings(BaseSettings):
     filter: Literal["stub", "real", "remote"] = "stub"
     grounder: Literal["stub", "real", "remote"] = "stub"
     grounding_url: str = ""
+    generator: Literal["stub", "real", "remote"] = "stub"
+    generator_url: str = ""
+    selva_base_model: str = "jnwnlee/SelVA"
+    selva_ft_model: str = "sogang-audyssey/selva-ft-selsync"
+    selva_ft_generator_file: str = "generator/S_O_s43/model_ema_step1000.pth"
+    selva_ft_encoder_file: str = "encoder/S_O/best.pt"
+    selva_device: str = "cuda"
+    selva_steps: int = 25
+    selva_cfg: float = 4.5
+    selva_seed: int = 42
+    selva_single_max_s: float = 10
+    selva_window_s: float = 8
+    max_generation_retries: int = Field(default=2, ge=0)
+    generation_margin_threshold: float = 0.0
     # Visual prompting (SAM3 locate + masked video for SAM Audio) is off by default:
     # with a text description the mask barely changed separation in our tests.
     visual_prompt: bool = False

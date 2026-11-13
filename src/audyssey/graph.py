@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from functools import wraps
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from langsmith import traceable
@@ -10,6 +11,7 @@ from audyssey.contracts import (
     AddSource,
     Command,
     Drop,
+    Generate,
     Job,
     Keep,
     PlanIssue,
@@ -21,7 +23,7 @@ from audyssey.contracts import (
     SourcePlan,
     StepStatus,
 )
-from audyssey.media import compute_peaks, extract_audio, probe
+from audyssey.media import compute_peaks, extract_audio, is_silent, probe, write_silence
 from audyssey.settings import Settings
 from audyssey.store import JobStore
 from audyssey.tools import Tools
@@ -70,7 +72,134 @@ def update_step(job: Job, ctx: Context, step: StepStatus) -> None:
     ctx.store.save(job)
 
 
+def siblings(job: Job, source: Source) -> list[SourcePlan]:
+    return [
+        other.plan
+        for other in job.sources
+        if other.id not in {source.id, source.replaces}
+        and other.plan.kind != "dialogue"
+    ]
+
+
+def generate_source(job: Job, source: Source, ctx: Context) -> None:
+    if source.plan.kind == "dialogue":
+        source.status, source.track_path = "skipped", None
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key=f"generate:{source.id}",
+                status="done",
+                message="dialogue is not generated",
+            ),
+        )
+        return
+    directory = ctx.store.dir(job.id)
+    maximum = 1 + ctx.settings.max_generation_retries
+    source.status = "running"
+    best_path: Path | None = None
+    best_result = None
+    attempts: list[Path] = []
+    messages: list[str] = []
+    key = f"generate:{source.id}"
+    reference = job.find_source(source.replaces) if source.replaces else None
+    try:
+        for round_number in range(1, maximum + 1):
+            source.attempts += 1
+            key = f"generate:{source.id}"
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key, status="running", round=round_number, max_rounds=maximum
+                ),
+            )
+            out = directory / f"tracks/{source.id}.attempt{source.attempts}.wav"
+            attempts.append(out)
+            path = ctx.tools.generate(
+                directory / job.video_path,
+                source.plan,
+                out,
+                ctx.settings.selva_seed + source.attempts - 1,
+            )
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key, status="done", round=round_number, max_rounds=maximum
+                ),
+            )
+            key = f"score:{source.id}"
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key,
+                    status="running",
+                    round=round_number,
+                    max_rounds=maximum,
+                    message="; ".join(messages),
+                ),
+            )
+            result = ctx.tools.score_generation(
+                path,
+                source.plan,
+                siblings(job, source),
+                directory / reference.track_path
+                if reference and reference.track_path
+                else None,
+            )
+            messages.append(
+                f"attempt {source.attempts}: correct={result.scores.get('text_correct')} "
+                f"margin={result.scores.get('text_margin')} {result.reason}".rstrip()
+            )
+            if best_result is None or result.scores.get(
+                "text_margin", 0
+            ) >= best_result.scores.get("text_margin", 0):
+                best_path, best_result = path, result
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key,
+                    status="done" if result.passed else "warning",
+                    round=round_number,
+                    max_rounds=maximum,
+                    message="; ".join(messages),
+                ),
+            )
+            if result.passed:
+                break
+        if best_path is None:
+            raise RuntimeError("generation produced no track")
+        final = directory / f"tracks/{source.id}.wav"
+        best_path.replace(final)
+        source.track_path = str(final.relative_to(directory))
+        source.filter = best_result
+        source.status = "done"
+    except Exception as exc:
+        source.status, source.track_path = "failed", None
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key=key,
+                status="failed",
+                round=round_number,
+                max_rounds=maximum,
+                message=str(exc),
+            ),
+        )
+    finally:
+        for path in attempts:
+            path.unlink(missing_ok=True)
+    ctx.store.save(job)
+
+
 def process_source(job: Job, source: Source, ctx: Context) -> None:
+    if job.silent or source.origin == "generated":
+        generate_source(job, source, ctx)
+        return
     directory = ctx.store.dir(job.id)
     maximum = ctx.settings.max_separation_retries + 1
     source.status = "running"
@@ -179,11 +308,18 @@ class AnalysisState:
 
 
 def refresh_residual(job: Job, ctx: Context) -> None:
+    if job.silent:
+        job.residual.path = None
+        return
     directory = ctx.store.dir(job.id)
     update_step(job, ctx, StepStatus(key="residual", status="running"))
     compute_residual(
         directory / job.audio_path,
-        [directory / s.track_path for s in job.sources if s.track_path],
+        [
+            directory / s.track_path
+            for s in job.sources
+            if s.origin == "separated" and s.track_path
+        ],
         directory / "residual.wav",
     )
     job.residual.path = "residual.wav"
@@ -199,10 +335,19 @@ def analyze(
 
     def preprocess(state: AnalysisState) -> dict:
         update_step(job, ctx, StepStatus(key="preprocess", status="running"))
-        if not job.duration:
-            job.duration = probe(directory / job.video_path)[0]
-        extract_audio(directory / job.video_path, directory / "audio.wav", False)
-        extract_audio(directory / job.video_path, directory / "mono.wav", True)
+        duration, channels = probe(directory / job.video_path)
+        job.duration = duration
+        if channels == 0:
+            write_silence(directory / "audio.wav", duration, 2)
+            write_silence(directory / "mono.wav", duration, 1)
+            job.silent = True
+        else:
+            extract_audio(directory / job.video_path, directory / "audio.wav", False)
+            extract_audio(directory / job.video_path, directory / "mono.wav", True)
+            job.silent = is_silent(directory / "audio.wav")
+            if job.silent:
+                write_silence(directory / "audio.wav", duration, channels)
+                write_silence(directory / "mono.wav", duration, 1)
         job.audio_path, job.mono_path, job.peaks_path = (
             "audio.wav",
             "mono.wav",
@@ -242,7 +387,11 @@ def analyze(
         for i, plan_item in enumerate(plans, 1):
             source = previous.get(plan_item.name)
             if source is None:
-                source = Source(id=f"s{i}", plan=plan_item)
+                source = Source(
+                    id=f"s{i}",
+                    plan=plan_item,
+                    origin="generated" if job.silent else "separated",
+                )
             else:
                 source.id, source.plan = f"s{i}", plan_item
             sources.append(source)
@@ -391,22 +540,66 @@ def handle_command(job: Job, cmd: Command, ctx: Context) -> Job:
             raise
         update_step(job, ctx, StepStatus(key="render", status="done"))
     elif isinstance(cmd, AddSource):
+        if job.silent and cmd.method == "separate":
+            raise ValueError("silent videos only support generation")
+        if cmd.method == "generate" and cmd.plan.kind == "dialogue":
+            raise ValueError("dialogue is not generated")
         plans, issues = check_plans([cmd.plan], job.duration)
         if issues:
             raise ValueError("; ".join(i.message for i in issues))
         if any(s.plan.name == cmd.plan.name for s in job.sources):
             raise ValueError("source name already exists; use reseparate")
         number = max((int(s.id[1:]) for s in job.sources), default=0) + 1
-        source = Source(id=f"s{number}", plan=plans[0])
+        source = Source(
+            id=f"s{number}",
+            plan=plans[0],
+            origin="generated" if cmd.method == "generate" else "separated",
+        )
         job.sources.append(source)
         process_source(job, source, ctx)
-        refresh_residual(job, ctx)
+        if cmd.method == "separate":
+            refresh_residual(job, ctx)
     else:
         source = job.find_source(cmd.source_id)
         target = job.residual if cmd.source_id == "residual" else source
         if target is None:
             raise KeyError(cmd.source_id)
-        if isinstance(cmd, (Keep, Drop)):
+        if isinstance(cmd, Generate):
+            if source is None:
+                raise ValueError("residual cannot be generated")
+            if source.plan.kind == "dialogue":
+                raise ValueError("dialogue is not generated")
+            target_source = source
+            if source.origin == "separated":
+                replacement = next(
+                    (
+                        s
+                        for s in job.sources
+                        if s.origin == "generated" and s.replaces == source.id
+                    ),
+                    None,
+                )
+                target_source = replacement or Source(
+                    id=f"s{max(int(s.id[1:]) for s in job.sources) + 1}",
+                    plan=source.plan.model_copy(deep=True),
+                    origin="generated",
+                    replaces=source.id,
+                )
+            plan = target_source.plan.model_copy(deep=True)
+            if source.origin == "separated":
+                plan.name = source.plan.name + " (generated)"
+            if cmd.description is not None:
+                plan.description = cmd.description
+            _, issues = check_plans([plan], job.duration)
+            if issues:
+                raise ValueError("; ".join(i.message for i in issues))
+            target_source.plan = plan
+            if source.origin == "separated":
+                if target_source not in job.sources:
+                    job.sources.append(target_source)
+                source.keep = False
+            generate_source(job, target_source, ctx)
+        elif isinstance(cmd, (Keep, Drop)):
             target.keep = isinstance(cmd, Keep)
         elif isinstance(cmd, SetGain):
             target.gain = cmd.gain
@@ -417,6 +610,10 @@ def handle_command(job: Job, cmd: Command, ctx: Context) -> Job:
         elif isinstance(cmd, Reseparate):
             if source is None:
                 raise ValueError("residual cannot be reseparated")
+            if job.silent or source.origin == "generated":
+                raise ValueError(
+                    "generated sources and silent videos cannot be reseparated"
+                )
             plan = source.plan.model_copy(deep=True)
             if cmd.description is not None:
                 plan.description = cmd.description
