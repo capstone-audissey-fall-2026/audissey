@@ -15,7 +15,7 @@ def generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path:
     frequency = 220 + 55 * (sum(map(ord, plan.description)) % 8)
     # Only the stub planner's first non-dialogue source exercises the retry loop.
     amplitude = (
-        0.1 if plan.name == "sword_clash" and seed == Settings().selva_seed else 0.2
+        0.1 if plan.name == "sword_clash" and seed == Settings().gen_seed else 0.2
     )
     track[start : start + length] = amplitude * np.sin(
         2 * np.pi * frequency * np.arange(length) / 48000

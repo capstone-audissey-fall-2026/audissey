@@ -119,7 +119,7 @@ def generate_source(job: Job, source: Source, ctx: Context) -> None:
                 directory / job.video_path,
                 source.plan,
                 out,
-                ctx.settings.selva_seed + source.attempts - 1,
+                ctx.settings.gen_seed + source.attempts - 1,
             )
             update_step(
                 job,

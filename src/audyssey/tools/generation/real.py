@@ -59,7 +59,7 @@ def crossfade_join(
 
 
 def _require_offline() -> None:
-    # SelVA's feature constructors also load CLIP, T5 and BigVGAN internally.
+    # The base model's feature constructors also load CLIP, T5 and BigVGAN internally.
     if os.environ.get("HF_HUB_OFFLINE") != "1":
         raise RuntimeError(
             "real generation requires HF_HUB_OFFLINE=1 and cached weights"
@@ -83,19 +83,17 @@ def _load():
             repo_id=repo, filename=filename, local_files_only=True
         )
 
-    base = checkpoint(settings.selva_base_model, "weights/video_enc_sup_5.pth")
-    vae = checkpoint(settings.selva_base_model, "ext_weights/v1-44.pth")
+    base = checkpoint(settings.gen_base_model, "weights/video_enc_sup_5.pth")
+    vae = checkpoint(settings.gen_base_model, "ext_weights/v1-44.pth")
     synchformer = checkpoint(
-        settings.selva_base_model, "ext_weights/synchformer_state_dict.pth"
+        settings.gen_base_model, "ext_weights/synchformer_state_dict.pth"
     )
-    generator_path = checkpoint(
-        settings.selva_ft_model, settings.selva_ft_generator_file
-    )
-    encoder_path = checkpoint(settings.selva_ft_model, settings.selva_ft_encoder_file)
+    generator_path = checkpoint(settings.gen_model, settings.gen_generator_file)
+    encoder_path = checkpoint(settings.gen_model, settings.gen_encoder_file)
     config = evaluation.all_model_cfg["large_44k"]
     encoder = (
         encoder_module.get_my_textsynch("depth1")
-        .to(settings.selva_device, torch.bfloat16)
+        .to(settings.gen_device, torch.bfloat16)
         .eval()
     )
     encoder.load_weights(torch.load(base, map_location="cpu", weights_only=True))
@@ -105,7 +103,7 @@ def _load():
     )
     generator = (
         generator_module.get_my_mmaudio(config.model_name)
-        .to(settings.selva_device, torch.bfloat16)
+        .to(settings.gen_device, torch.bfloat16)
         .eval()
     )
     generator.load_weights(
@@ -120,11 +118,11 @@ def _load():
             bigvgan_vocoder_ckpt=None,
             need_vae_encoder=False,
         )
-        .to(settings.selva_device, torch.bfloat16)
+        .to(settings.gen_device, torch.bfloat16)
         .eval()
     )
     flow = flow_module.FlowMatching(
-        min_sigma=0, inference_mode="euler", num_steps=settings.selva_steps
+        min_sigma=0, inference_mode="euler", num_steps=settings.gen_steps
     )
     return (
         torch,
@@ -140,10 +138,10 @@ def _load():
 def generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path:
     settings = Settings()
     duration, _ = probe(video)
-    spans = windows(duration, settings.selva_single_max_s, settings.selva_window_s)
+    spans = windows(duration, settings.gen_single_max_s, settings.gen_window_s)
     with _model_lock:
         torch, evaluation, seq, encoder, generator, features, flow = _load()
-        rng = torch.Generator(device=settings.selva_device)
+        rng = torch.Generator(device=settings.gen_device)
         rng.manual_seed(seed)
         frames = evaluation.load_video(
             video, duration, load_all_frames=False
@@ -154,7 +152,7 @@ def generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path:
                 sync = frames[round(start * 25) : round(end * 25)]
                 if not sync.shape[0]:
                     raise ValueError(
-                        "SelVA decoded no frames for the generation window"
+                        "no video frames were decoded for the generation window"
                     )
                 if sync.shape[0] < 16:
                     sync = torch.cat(
@@ -175,7 +173,7 @@ def generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path:
                     net_generator=generator,
                     fm=flow,
                     rng=rng,
-                    cfg_strength=settings.selva_cfg,
+                    cfg_strength=settings.gen_cfg,
                 )
                 mono = audio.float().cpu().numpy()[0].reshape(-1)
                 chunks.append(resample_poly(mono, 160, 147))
@@ -191,7 +189,7 @@ def _load_clap():
     checkpoint = hub.hf_hub_download(
         repo_id="lukewys/laion_clap", filename="630k-best.pt", local_files_only=True
     )
-    clap = clap_module.CLAP_Module(enable_fusion=False, device=Settings().selva_device)
+    clap = clap_module.CLAP_Module(enable_fusion=False, device=Settings().gen_device)
     # torch>=2.6 loads weights_only; 630k-best.pt also pickles numpy scalars (epoch
     # metadata). Allow exactly those instead of turning weights_only off.
     scalar = import_module("numpy._core.multiarray").scalar

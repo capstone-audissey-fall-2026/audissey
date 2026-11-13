@@ -56,7 +56,7 @@ flowchart LR
     T1["분리<br/>SAM Audio"]
     T2["필터링<br/>SAM Audio Judge"]
     T3["그라운딩<br/>SAM3.1"]
-    T4["생성<br/>SelVA FT + SelSync · CLAP"]
+    T4["생성<br/>internal model · CLAP"]
   end
   TOOLS -. "읽기 전용 · 오프라인" .-> HF[("HF 캐시<br/>가중치")]
   MAIN -. "LANGSMITH_*" .-> LS["LangSmith"]
@@ -64,9 +64,9 @@ flowchart LR
 
 - **단계 순서는 코드에 고정**되어 있습니다(LangGraph). 업로드하면 타임라인까지 자동으로 진행하고, 그다음 편집은 사용자가 명령을 보내서 합니다.
 - **플래닝과 분리 뒤에 검증**이 있고, 실패하면 정해진 횟수만큼 다시 합니다.
-- **main 서버는 GPU를 쓰지 않습니다.** 모델은 도구 서버(SAM Audio, Judge, SAM3, SelVA·SelSync)와 플래너 LLM(Gemini 또는 vLLM)을 API로 부릅니다.
+- **main 서버는 GPU를 쓰지 않습니다.** 모델은 도구 서버(SAM Audio, Judge, SAM3, 생성 internal model)와 플래너 LLM(Gemini 또는 vLLM)을 API로 부릅니다.
 - **도구마다 `stub`(가짜), `real`(직접 실행), `remote`(다른 서버 호출)를 고를 수 있습니다.** 그래서 내 모듈만 실제 모델로 돌리고 나머지는 stub으로 둘 수 있습니다.
-- **생성 real은 SelVA FT·SelSync + CLAP 채점입니다.** 분리·Judge·그라운딩과 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
+- **생성 real은 팀 내부 모델(internal model) + CLAP 채점입니다.** 분리·Judge·그라운딩과 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
 - **시각 힌트는 기본으로 꺼져 있습니다.** 분리는 텍스트 설명과 구간으로 합니다.
 
 용어, 검증 규칙, 함수 시그니처, API, 코드 위치는 [docs/architecture.md](docs/architecture.md)에 있습니다.
@@ -110,7 +110,7 @@ flowchart LR
 | 분리 | `tools/separation/real.py` | 분리 담당 | 재시도할 때 조건·후보 수를 바꾸는 전략 |
 | 필터링 | `tools/filtering/real.py` | 필터링 담당 | 합격 기준 보정, 실패 이유와 `suggestion` 생성 |
 | 그라운딩 | `tools/grounding/real.py` | 미정 | 위치 확인 강화, 추적 실패 대비 |
-| 생성·채점 | `tools/generation/real.py` | 미정 | SelVA FT·SelSync 생성, CLAP TargetSel 보정, GPU 실측 |
+| 생성·채점 | `tools/generation/real.py` | 미정 | internal model 생성, CLAP TargetSel 보정 |
 | 편집·합치기 | `tools/editing/render.py` | 미정 | 편집 품질, 편집 명령 추가 |
 | 인프라·배포 | `docker/`, `compose.yaml`, `.github/workflows/` | 인프라 담당 | RunPod 템플릿 검증, 캐시 준비 안내 |
 

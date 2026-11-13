@@ -16,7 +16,8 @@ dependencies = [
     "opencv-python-headless>=4.11,<4.12",
     "pycocotools>=2.0.11",
     "sam-audio @ git+https://github.com/facebookresearch/sam-audio@bb4c6999d2677c7402360e426afc01ddfad6dce0",
-    # Generation (SelVA FT + SelSync). Its CLAP scoring reuses the laion-clap fork sam-audio pins.
+    # Generation tool (internal model on a public base). Its CLAP scoring reuses the laion-clap fork
+    # that sam-audio pins.
     "selva @ git+https://github.com/jnwnlee/selva@d7d40a992aab58e7cf246055681a657e5d8b4a4d",
 ]
 

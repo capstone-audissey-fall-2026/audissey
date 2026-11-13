@@ -63,9 +63,9 @@
 | sv3-a100, A100 80GB × 1 | 컨테이너 5개를 한 장에, 공식 large-tv·Judge·SAM3.1, 후보 4개, vLLM 0.2 | 201초에 ready, Judge 4.95 통과, 최대 GPU 69.1GB |
 | sv3-a100, A100 80GB × 1 | GHCR 이미지(`65bd7a3`), 시각 힌트 끔(기본), 후보 4개, vLLM 0.2 | 131초에 ready, SAM3 호출 없음, Judge 5.01 통과, 오류 0, 최대 GPU 49.9GB |
 
-### 생성 경로 (SelVA FT8 S_O + SelSync)
+### 생성 경로 (internal model)
 
-sv3-a100 A100 80GB × 1 (GPU 7). 생성 가중치는 `sogang-audyssey/selva-ft-selsync`(비공개 FT) + `jnwnlee/SelVA`(베이스), CLAP은 `hkchengrex/CLAP@590b52d`.
+sv3-a100 A100 80GB × 1 (GPU 7). 생성 가중치는 `sogang-audyssey/internal-model`(비공개) + 공개 베이스.
 
 | 조건 | 결과 |
 |---|---|
@@ -77,7 +77,7 @@ sv3-a100 A100 80GB × 1 (GPU 7). 생성 가중치는 `sogang-audyssey/selva-ft-s
 | 같은 구성 최대 GPU | 56.6GB. 생성 컨테이너 모델 로딩 1회 |
 | 생성을 tools 이미지로 합친 뒤(`gpu/` 환경: torch 2.11, numpy 1.26), 6개 컨테이너 한 장 | 유음 첫 실행 148.7초, 두 번째 28.2초, `generate` 13.5초, 무음 80.3초. 최대 GPU 56.6GB(변화 없음) |
 | 같은 이미지로 RunPod처럼 tools 컨테이너 하나(도구 4개 한 프로세스) + main + vLLM | 유음 128.6초, 무음 36.2초. 최대 GPU 48.5GB 중 vLLM 14.6GB → **도구 4개 약 34GB**(후보 4개, 시각 힌트 끔) |
-| SelVA torch 2.6 → 2.11 | 같은 seed에서 파형은 달라짐(상관 0.34–0.79), TargetSel margin 0.27·0.17·0.47·0.57로 비슷, 모두 합격. 8초 생성 3.5초 그대로 |
+| 생성 모델 torch 2.6 → 2.11 | 같은 seed에서 파형은 달라짐(상관 0.34–0.79), TargetSel margin 0.27·0.17·0.47·0.57로 비슷, 모두 합격. 8초 생성 3.5초 그대로 |
 | 재현성: 새 폴더에 clone, `.env.example`에서 토큰·GPU 번호만 바꿈, 로그인 없이 GHCR 이미지만 받아 빈 GPU 한 장 (`70dda11`, 기본값 후보 1개) | 유음 102.5초, 무음 78.3초(생성 자동, 대사 제외), 둘 다 render 성공. 최대 GPU 46.1GB |
 
 - 3B vLLM 플래너는 설명란에 검증 메시지 같은 문장을 넣는 등 품질이 낮았습니다. 생성 프롬프트는 이 설명을 그대로 쓰므로 데모에는 Gemini 플래너를 권장합니다.

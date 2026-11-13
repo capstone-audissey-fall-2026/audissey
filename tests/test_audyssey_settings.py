@@ -90,11 +90,11 @@ class SettingsTests(unittest.TestCase):
                 Settings(planner_frames=count)
 
     def test_generation_settings_from_env(self):
-        values = {"GENERATOR": "remote", "GENERATOR_URL": "http://generation:8700", "SELVA_BASE_MODEL": "base", "SELVA_FT_MODEL": "private/ft", "SELVA_FT_GENERATOR_FILE": "g.pth", "SELVA_FT_ENCODER_FILE": "e.pt", "SELVA_DEVICE": "cpu", "SELVA_STEPS": "5", "SELVA_CFG": "3.5", "SELVA_SEED": "17", "SELVA_SINGLE_MAX_S": "9", "SELVA_WINDOW_S": "7", "MAX_GENERATION_RETRIES": "0", "GENERATION_MARGIN_THRESHOLD": "0.2"}
+        values = {"GENERATOR": "remote", "GENERATOR_URL": "http://generation:8700", "GEN_BASE_MODEL": "base", "GEN_MODEL": "private/ft", "GEN_GENERATOR_FILE": "g.pth", "GEN_ENCODER_FILE": "e.pt", "GEN_DEVICE": "cpu", "GEN_STEPS": "5", "GEN_CFG": "3.5", "GEN_SEED": "17", "GEN_SINGLE_MAX_S": "9", "GEN_WINDOW_S": "7", "MAX_GENERATION_RETRIES": "0", "GENERATION_MARGIN_THRESHOLD": "0.2"}
         with patch.dict(os.environ, {"AUDYSSEY_" + k: v for k, v in values.items()}, clear=True):
             settings = Settings()
         for name, expected in values.items():
-            self.assertEqual(str(getattr(settings, name.lower())), str(float(expected)) if name in {"SELVA_CFG", "SELVA_SINGLE_MAX_S", "SELVA_WINDOW_S", "GENERATION_MARGIN_THRESHOLD"} else expected)
+            self.assertEqual(str(getattr(settings, name.lower())), str(float(expected)) if name in {"GEN_CFG", "GEN_SINGLE_MAX_S", "GEN_WINDOW_S", "GENERATION_MARGIN_THRESHOLD"} else expected)
         with self.assertRaises(ValidationError):
             Settings(max_generation_retries=-1)
         with self.assertRaises(ValidationError):

@@ -15,16 +15,16 @@ class Settings(BaseSettings):
     grounding_url: str = ""
     generator: Literal["stub", "real", "remote"] = "stub"
     generator_url: str = ""
-    selva_base_model: str = "jnwnlee/SelVA"
-    selva_ft_model: str = "sogang-audyssey/selva-ft-selsync"
-    selva_ft_generator_file: str = "generator/S_O_s43/model_ema_step1000.pth"
-    selva_ft_encoder_file: str = "encoder/S_O/best.pt"
-    selva_device: str = "cuda"
-    selva_steps: int = 25
-    selva_cfg: float = 4.5
-    selva_seed: int = 42
-    selva_single_max_s: float = 15
-    selva_window_s: float = 8
+    gen_base_model: str = "jnwnlee/SelVA"
+    gen_model: str = "sogang-audyssey/internal-model"
+    gen_generator_file: str = "generator/S_O_s43/model_ema_step1000.pth"
+    gen_encoder_file: str = "encoder/S_O/best.pt"
+    gen_device: str = "cuda"
+    gen_steps: int = 25
+    gen_cfg: float = 4.5
+    gen_seed: int = 42
+    gen_single_max_s: float = 15
+    gen_window_s: float = 8
     max_generation_retries: int = Field(default=2, ge=0)
     generation_margin_threshold: float = 0.0
     # Visual prompting (SAM3 locate + masked video for SAM Audio) is off by default:
