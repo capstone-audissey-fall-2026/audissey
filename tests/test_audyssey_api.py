@@ -48,14 +48,11 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(self.ready()["sources"]), 3)
         self.assertEqual(len(self.client.get("/api/jobs").json()), 1)
 
-    def test_upload_rejects_no_audio(self):
-        silent = make_video(self.root / "silent.mp4", audio=False)
-        response = self.client.post(
-            "/api/jobs", files={"file": ("silent.mp4", silent.read_bytes())}
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("audio stream", response.json()["detail"])
-        self.assertEqual(self.client.get("/api/jobs").json(), [])
+    def test_upload_accepts_no_audio(self):
+        self.video = make_video(self.root / "silent.mp4", audio=False)
+        job = self.ready("silent.mp4")
+        self.assertTrue(job["silent"])
+        self.assertIsNone(job["residual"]["path"])
 
     def test_upload_rejects_too_large(self):
         self.app.state.ctx.settings.max_upload_mb = len(self.video.read_bytes()) / 2 / 2**20

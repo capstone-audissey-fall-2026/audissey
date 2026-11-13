@@ -106,6 +106,7 @@ class RenderOutput(Model):
 class Job(Model):
     id: str
     video_path: str
+    silent: bool = False
     duration: float = 0
     audio_path: str = ""
     mono_path: str = ""

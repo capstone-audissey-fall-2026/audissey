@@ -30,14 +30,12 @@ def probe(video: Path) -> tuple[float, int]:
         )
         info = json.loads(result.stdout)
         audio = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
-        if audio is None:
-            raise MediaError("video has no audio stream")
         if not any(s["codec_type"] == "video" for s in info["streams"]):
             raise MediaError("file has no video stream")
         duration = float(info["format"]["duration"])
         if not math.isfinite(duration) or duration <= 0:
             raise MediaError("video duration must be positive and finite")
-        return duration, int(audio["channels"])
+        return duration, int(audio["channels"]) if audio is not None else 0
     except subprocess.CalledProcessError as exc:
         raise MediaError(exc.stderr) from exc
     except (OSError, KeyError, TypeError, ValueError) as exc:
@@ -140,3 +138,13 @@ def extract_frames(video: Path, count: int, out_dir: Path) -> list[tuple[float, 
     if any(not path.is_file() for _, path in frames):
         raise MediaError("could not extract all planner frames")
     return frames
+
+
+def is_silent(wav: Path, threshold_db: float = -60.0) -> bool:
+    return bool(np.max(np.abs(read_wav(wav)), initial=0) < 10 ** (threshold_db / 20))
+
+
+def write_silence(out: Path, duration: float, channels: int) -> Path:
+    return write_wav(
+        out, np.zeros((round(duration * 48000), channels), dtype=np.float32)
+    )

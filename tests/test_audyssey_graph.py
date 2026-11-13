@@ -307,3 +307,32 @@ class GraphTests(unittest.TestCase):
         job = graph.analyze(self.job, self.ctx)
         self.assertEqual(job.state, 'ready')
         self.assertEqual([s.status for s in job.sources], ['failed', 'done', 'done'])
+
+    def test_preprocess_marks_silent_without_audio_stream(self):
+        import json
+        make_video(self.directory / self.job.video_path, seconds=1, audio=False)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready", job.error)
+        self.assertTrue(job.silent)
+        for filename, channels in [("audio.wav", 2), ("mono.wav", 1)]:
+            data = read_wav(self.directory / filename)
+            self.assertEqual(data.shape, (48000, channels))
+            np.testing.assert_array_equal(data, 0)
+        self.assertEqual(json.loads((self.directory / "peaks.json").read_text()), [0] * 800)
+        self.assertIsNone(job.residual.path)
+
+    def test_preprocess_marks_silent_for_near_silent_audio(self):
+        import subprocess
+        out = self.directory / "quiet.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(self.directory / self.job.video_path),
+                        "-af", "volume=0.0025", "-c:v", "copy", str(out)], check=True, capture_output=True)
+        self.job.video_path = "quiet.mp4"
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready", job.error)
+        self.assertTrue(job.silent)
+        self.assertIsNone(job.residual.path)
+
+    def test_preprocess_keeps_normal_audio(self):
+        job = graph.analyze(self.job, self.ctx)
+        self.assertFalse(job.silent)
+        self.assertTrue((self.directory / job.residual.path).is_file())

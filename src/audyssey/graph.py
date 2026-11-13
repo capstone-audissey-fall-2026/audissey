@@ -21,7 +21,7 @@ from audyssey.contracts import (
     SourcePlan,
     StepStatus,
 )
-from audyssey.media import compute_peaks, extract_audio, probe
+from audyssey.media import compute_peaks, extract_audio, is_silent, probe, write_silence
 from audyssey.settings import Settings
 from audyssey.store import JobStore
 from audyssey.tools import Tools
@@ -179,6 +179,9 @@ class AnalysisState:
 
 
 def refresh_residual(job: Job, ctx: Context) -> None:
+    if job.silent:
+        job.residual.path = None
+        return
     directory = ctx.store.dir(job.id)
     update_step(job, ctx, StepStatus(key="residual", status="running"))
     compute_residual(
@@ -199,10 +202,19 @@ def analyze(
 
     def preprocess(state: AnalysisState) -> dict:
         update_step(job, ctx, StepStatus(key="preprocess", status="running"))
-        if not job.duration:
-            job.duration = probe(directory / job.video_path)[0]
-        extract_audio(directory / job.video_path, directory / "audio.wav", False)
-        extract_audio(directory / job.video_path, directory / "mono.wav", True)
+        duration, channels = probe(directory / job.video_path)
+        job.duration = duration
+        if channels == 0:
+            write_silence(directory / "audio.wav", duration, 2)
+            write_silence(directory / "mono.wav", duration, 1)
+            job.silent = True
+        else:
+            extract_audio(directory / job.video_path, directory / "audio.wav", False)
+            extract_audio(directory / job.video_path, directory / "mono.wav", True)
+            job.silent = is_silent(directory / "mono.wav")
+            if job.silent:
+                write_silence(directory / "audio.wav", duration, channels)
+                write_silence(directory / "mono.wav", duration, 1)
         job.audio_path, job.mono_path, job.peaks_path = (
             "audio.wav",
             "mono.wav",

@@ -29,9 +29,21 @@ class MediaTests(unittest.TestCase):
         self.assertAlmostEqual(duration, 3, delta=0.1)
         self.assertEqual(channels, 2)
 
-    def test_check_upload_rejects_no_audio(self):
-        with self.assertRaisesRegex(MediaError, "audio stream"):
-            check_upload(make_video(self.root / "silent.mp4", audio=False), 30)
+    def test_probe_accepts_video_without_audio(self):
+        video = make_video(self.root / "silent.mp4", seconds=1, audio=False)
+        duration, channels = probe(video)
+        self.assertAlmostEqual(duration, 1, delta=0.1)
+        self.assertEqual(channels, 0)
+        self.assertAlmostEqual(check_upload(video, 30), 1, delta=0.1)
+
+    def test_is_silent_threshold(self):
+        from audyssey.media import is_silent, write_silence
+        for amplitude, expected in [(0.0005, True), (0.01, False), (0.001, False)]:
+            data = amplitude * np.cos(2 * np.pi * 440 * np.arange(48000) / 48000)
+            self.assertEqual(is_silent(write_wav(self.root / "tone.wav", data)), expected)
+        out = write_silence(self.root / "zero.wav", 1.25, 2)
+        self.assertEqual(read_wav(out).shape, (60000, 2))
+        np.testing.assert_array_equal(read_wav(out), 0)
 
     def test_check_upload_rejects_too_long(self):
         with self.assertRaisesRegex(MediaError, "maximum is 2s"):
