@@ -100,7 +100,7 @@ reseparate(source_id, description?, spans?)   generate(source_id, description?)
 add_source(plan, method="separate")          render(include_residual_stem)
 ```
 
-대사·residual 대상 `generate`, 무음 영상의 `add_source(method="separate")`, 대사 `add_source(method="generate")`, 생성 소스·무음 영상의 `reseparate`는 거절합니다(API 400). 기존 명령 형식·검증 오류는 422, 없는 소스는 404입니다. `generate`도 실행 잠금을 사용해 바쁜 작업에는 409를 돌려줍니다.
+대사·residual 대상 `generate`, 무음 영상의 `add_source(method="separate")`, 대사 `add_source(method="generate")`, 생성 소스·무음 영상의 `reseparate`는 거절합니다(422, 다른 명령 검증 오류와 같음). 없는 소스는 404입니다. `generate`도 실행 잠금을 사용해 바쁜 작업에는 409를 돌려줍니다.
 
 **main 서버 API.** UI는 아래 API만 쓰면 됩니다.
 
@@ -109,7 +109,7 @@ POST /api/jobs                    multipart(video) → Job (업로드 후 자동
 GET  /api/jobs                    → Job 요약 목록
 GET  /api/jobs/{id}               → Job
 GET  /api/jobs/{id}/events        SSE: 상태가 바뀔 때마다 Job 전송
-POST /api/jobs/{id}/commands      Command → Job | 400(생성 경로 거절) | 409(실행 중) | 422(형식 오류)
+POST /api/jobs/{id}/commands      Command → Job | 404(없는 소스) | 409(실행 중) | 422(형식·검증 오류)
 GET  /api/jobs/{id}/files/{path}  작업 폴더의 오디오·영상·파형 파일
 ```
 

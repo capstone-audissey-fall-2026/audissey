@@ -105,17 +105,7 @@ def create_app(settings: Settings | None = None, tools: Tools | None = None) -> 
         except KeyError as exc:
             raise HTTPException(404, "source not found") from exc
         except ValueError as exc:
-            source = (
-                job.find_source(cmd.source_id) if isinstance(cmd, Reseparate) else None
-            )
-            generation_error = (
-                isinstance(cmd, Generate)
-                or isinstance(cmd, AddSource)
-                and (cmd.method == "generate" or job.silent)
-                or isinstance(cmd, Reseparate)
-                and (job.silent or source is not None and source.origin == "generated")
-            )
-            raise HTTPException(400 if generation_error else 422, str(exc)) from exc
+            raise HTTPException(422, str(exc)) from exc
         finally:
             if execution:
                 lock.release()

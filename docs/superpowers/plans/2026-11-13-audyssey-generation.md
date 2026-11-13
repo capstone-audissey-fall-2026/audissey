@@ -164,7 +164,7 @@
   - `test_generate_twice_reuses_replacement` (Review Focus): 두 번째 `Generate(s1)`은 소스 수를 늘리지 않고 같은 생성 소스를 다른 seed로 다시 생성.
   - `test_generate_regenerates_generated_source`: 생성 소스에 `Generate(description="x")` → 설명이 바뀌고 seed가 이전보다 큼(attempts를 되돌리지 않음).
   - `test_generate_does_not_change_residual` (Review Focus): `Generate` 전후 residual 파일 내용이 같고, 분리 stem을 다시 `Keep`해도 residual은 그대로.
-  - 거절(`ValueError` → API 400): 대사 소스에 `Generate`, `source_id="residual"`, 무음 영상에서 `AddSource(method="separate")`, `AddSource(method="generate", kind="dialogue")`, 생성 소스나 무음 영상에 `Reseparate`.
+  - 거절(`ValueError` → API 422, 기존 명령과 같음): 대사 소스에 `Generate`, `source_id="residual"`, 무음 영상에서 `AddSource(method="separate")`, `AddSource(method="generate", kind="dialogue")`, 생성 소스나 무음 영상에 `Reseparate`.
   - `test_add_source_generate`: 유음 영상에 `AddSource(method="generate")` → `origin="generated"`로 생성, 분리 도구 호출 없음, residual 그대로.
 - [ ] **Step 2: 실패 확인**
 - [ ] **Step 3: 구현** — 명세 §5 동작 그대로. 생성 명령 뒤에는 `refresh_residual`을 부르지 않는다.

@@ -193,7 +193,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Audyssey dev UI", response.text)
 
-    def test_generation_command_errors_are_400(self):
+    def test_generation_command_errors_are_422(self):
         job = self.ready()
         for command in [
             {"type": "generate", "source_id": "s1"},
@@ -202,15 +202,15 @@ class ApiTests(unittest.TestCase):
         ]:
             before = self.client.get(f"/api/jobs/{job['id']}").json()
             response = self.command(job["id"], command)
-            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual(response.status_code, 422, response.text)
             self.assertEqual(self.client.get(f"/api/jobs/{job['id']}").json(), before)
         response = self.command(job["id"], {"type": "generate", "source_id": "s3"})
         self.assertEqual(response.status_code, 200, response.text)
         generated = response.json()["sources"][-1]
         response = self.command(job["id"], {"type": "reseparate", "source_id": generated["id"]})
-        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.status_code, 422, response.text)
 
-    def test_silent_separation_commands_are_400(self):
+    def test_silent_separation_commands_are_422(self):
         self.video = make_video(self.root / "silent.mp4", audio=False)
         job = self.ready()
         for command in [
@@ -218,7 +218,7 @@ class ApiTests(unittest.TestCase):
             {"type": "add_source", "plan": {"name": "extra", "kind": "sfx", "description": "sound"}},
         ]:
             response = self.command(job["id"], command)
-            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual(response.status_code, 422, response.text)
 
     def test_generate_is_an_execution_command(self):
         job = self.ready()
