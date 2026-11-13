@@ -30,5 +30,5 @@ GIT_CONFIG_VALUE_0=HTTP/1.1`. Imports emit an upstream timm deprecation warning.
 
 Prepare the [offline weights](../docs/running.md#가중치-준비) first; the adapter
 requires `HF_HUB_OFFLINE=1` before loading any models. No model downloads happen
-at server runtime. GPU inference, 8s/10s quality and memory measurements, Docker
+at server runtime. GPU inference, 8s/15s quality and memory measurements, Docker
 build, and six-container Compose E2E remain pending operator verification.

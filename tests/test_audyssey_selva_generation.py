@@ -29,12 +29,12 @@ class SelvaGenerationTests(unittest.TestCase):
         self.addCleanup(real._load_clap.cache_clear)
 
     def test_windows_short_video(self):
-        self.assertEqual(self.real.windows(9.8, 10, 8), [(0, 9.8)])
-        self.assertEqual(self.real.windows(10, 10, 8), [(0, 10)])
+        self.assertEqual(self.real.windows(9.8, 15, 8), [(0, 9.8)])
+        self.assertEqual(self.real.windows(15, 15, 8), [(0, 15)])
 
     def test_windows_cover_long_video(self):
-        self.assertEqual(self.real.windows(20, 10, 8), [(0, 8), (7, 15), (12, 20)])
-        self.assertEqual(self.real.windows(10.1, 10, 8), [(0, 8), (2.1, 10.1)])
+        self.assertEqual(self.real.windows(20, 15, 8), [(0, 8), (7, 15), (12, 20)])
+        self.assertEqual(self.real.windows(15.1, 15, 8), [(0, 8), (7, 15), (7.1, 15.1)])
 
     def test_windows_reject_invalid_settings(self):
         for args in [(20, 10, 1), (20, 10, 0), (20, 10, -2), (20, 0, 8), (float('nan'), 10, 8)]:
@@ -86,6 +86,13 @@ class SelvaGenerationTests(unittest.TestCase):
         self.assertEqual(data.shape, (480000, 1))
         np.testing.assert_allclose(data[100:47000], 1, atol=0.002)
         np.testing.assert_array_equal(data[48000:], 0)
+
+    def test_fifteen_seconds_uses_one_pass_by_default(self):
+        fake = runtime(15)
+        out = self.run_generate(fake, 15)
+        self.assertEqual(read_wav(out).shape, (720000, 1))
+        self.assertEqual(fake.evaluation.generate.call_count, 1)
+        self.assertEqual(fake.evaluation.generate.call_args.args[1].shape[1], 375)
 
     def test_long_video_output_length(self):
         fake = runtime(20)

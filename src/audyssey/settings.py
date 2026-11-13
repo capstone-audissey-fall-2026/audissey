@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     selva_steps: int = 25
     selva_cfg: float = 4.5
     selva_seed: int = 42
-    selva_single_max_s: float = 10
+    selva_single_max_s: float = 15
     selva_window_s: float = 8
     max_generation_retries: int = Field(default=2, ge=0)
     generation_margin_threshold: float = 0.0

@@ -51,7 +51,7 @@
 **비목표**
 - 대사(dialogue) 생성. TTS도 넣지 않는다. 대사는 분리로만 다룬다.
 - 유음 영상에서 생성을 자동으로 돌리는 것. 생성은 사용자가 요청할 때만 한다.
-- 10초를 넘는 영상의 생성 품질 보장. 돌아가기만 하면 된다.
+- 15초를 넘는 영상의 생성 품질 보장. 돌아가기만 하면 된다.
 - RunPod 구성 갱신. RunPod 검증은 별도로 미뤄져 있다(§9).
 - 최종 UI 디자인. 개발용 화면(`devui/`)에 필요한 최소 조작만 넣는다.
 - 분리 쪽 동작 변경. 플래너 구간을 SAM Audio에 넘기는 문제는 따로 다룬다(§11).
@@ -186,9 +186,9 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]
 - 모델은 첫 요청 때 한 번 올리고 프로세스가 끝날 때까지 재사용한다(다른 도구와 같은 `@cache` 방식).
 
 **길이 처리**
-- 영상이 `AUDYSSEY_SELVA_SINGLE_MAX_S`(기본 10초) 이하면 영상 전체 길이로 한 번 생성한다.
-- 더 길면 길이 `AUDYSSEY_SELVA_WINDOW_S`(기본 8초) 창을 겹침 1초로 이어 영상 전체를 덮고, 겹친 구간은 선형 크로스페이드로 잇는다 (제안).
-- 구현 첫 단계에서 8초와 10초 단일 생성 품질을 비교해, 10초 기본값이 괜찮은지 기록한다(§10).
+- 영상이 `AUDYSSEY_SELVA_SINGLE_MAX_S`(기본 15초) 이하면 영상 전체 길이로 한 번 생성한다.
+- 더 길면 길이 `AUDYSSEY_SELVA_WINDOW_S`(기본 8초) 창을 겹침 1초로 이어 영상 전체를 덮는다. 마지막 창은 영상 끝에 맞추므로 겹침이 더 길 수 있으며, 겹친 전체 구간은 선형 크로스페이드로 잇는다 (제안).
+- 구현 첫 단계에서 8초와 15초 단일 생성 품질을 비교해, 15초 기본값이 괜찮은지 기록한다(§10).
 
 **채점 (텍스트 TargetSel만 사용)**
 - LAION-CLAP으로 생성 stem의 오디오 임베딩과, 자기 설명 및 형제 설명들의 텍스트 임베딩 사이 코사인 유사도를 구한다.
@@ -255,7 +255,7 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]
 | `SELVA_DEVICE` | `cuda` | |
 | `SELVA_STEPS`, `SELVA_CFG` | `25`, `4.5` | 평가 설정과 같음 |
 | `SELVA_SEED` | `42` | 첫 시도의 seed |
-| `SELVA_SINGLE_MAX_S`, `SELVA_WINDOW_S` | `10`, `8` | 길이 처리 |
+| `SELVA_SINGLE_MAX_S`, `SELVA_WINDOW_S` | `15`, `8` | 길이 처리 |
 | `MAX_GENERATION_RETRIES` | `2` | 총 시도 = 1 + 이 값 |
 | `GENERATION_MARGIN_THRESHOLD` | `0.0` | 텍스트 TargetSel 합격 기준 (보정 전) |
 | `GENERATION_GPU` | `0` | Compose 전용 |
@@ -284,14 +284,14 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]
   - 도구 서버 `generation`의 인증과 업로드 제한
   - 기존 테스트가 모두 그대로 통과
 - 실제 모델 확인 (A100, 빌린 GPU에서 한 번):
-  - SelVA real 단독 실행으로 8초와 10초 영상을 생성하고 시간과 최대 GPU 메모리를 기록
+  - SelVA real 단독 실행으로 8초와 15초 영상을 생성하고 시간과 최대 GPU 메모리를 기록
   - Compose 6개 컨테이너를 한 장에 올려 유음 영상(대체 생성 1회)과 무음 영상(자동 생성)을 끝까지 돌리고, 단계별 시간·최대 GPU 메모리·TargetSel 점수를 `docs/status.md`에 기록
 
 ## 11. 남은 일과 위험
 
 - FT 가중치용 HF 조직·저장소: `sogang-audyssey/selva-ft-selsync`(비공개) 생성 완료. 두 파일 업로드는 **구현 시작 전에 먼저 한다**.
 - 새 `audyssey-generation` 패키지가 공개인지 첫 업로드 뒤 확인 (비공개면 사용자가 공개로 전환).
-- SelVA GPU 메모리와 10초 생성 품질은 아직 측정하지 않았다.
+- SelVA GPU 메모리와 15초 생성 품질은 아직 측정하지 않았다.
 - `GENERATION_MARGIN_THRESHOLD`는 보정 전이다.
 - 분리 쪽도 플래너 구간을 SAM Audio에 넘긴다. 플래너 타이밍이 부정확하다는 같은 문제가 분리 품질에 영향을 주는지는 따로 확인한다.
 - RunPod에서 생성 도구를 띄우는 방법은 RunPod 검증 때 정한다.

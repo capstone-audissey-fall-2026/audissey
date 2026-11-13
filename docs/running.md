@@ -182,10 +182,10 @@ AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run au
 ```
 
 - 기본 설정: `large_44k`, bf16, Euler 25회, CFG 4.5, 부정 프롬프트 없음. 설명만 사용하며 계획 구간·시각 힌트로 자르지 않습니다.
-- 10초까지 단일 생성, 그보다 길면 8초 창을 잇습니다. 마지막 창은 끝에 맞추므로 실제 겹침이 1초보다 길 수 있으며 전체 겹침을 선형 크로스페이드합니다. 44.1kHz 결과를 48kHz 모노로 리샘플하고 `round(duration * 48000)` 샘플에 맞춥니다.
+- 15초까지 단일 생성, 그보다 길면 8초 창을 잇습니다. 마지막 창은 끝에 맞추므로 실제 겹침이 1초보다 길 수 있으며 전체 겹침을 선형 크로스페이드합니다. 44.1kHz 결과를 48kHz 모노로 리샘플하고 `round(duration * 48000)` 샘플에 맞춥니다.
 - CLAP 텍스트 TargetSel은 자기 설명이 가장 가깝고 margin이 임계값 이상이면 합격합니다. 형제가 없으면 margin 없이 합격합니다.
 - 실행 중 다운로드를 막기 위해 real 생성·채점은 `HF_HUB_OFFLINE=1`을 필수로 요구합니다. 모델은 첫 호출 뒤 재사용하며 GPU 호출은 한 번에 하나씩 실행합니다.
-- 8초/10초 품질·시간·메모리와 6개 컨테이너 E2E는 측정 전입니다. `GENERATION_MARGIN_THRESHOLD`도 보정 전입니다.
+- 8초/15초 품질·시간·메모리와 6개 컨테이너 E2E는 측정 전입니다. `GENERATION_MARGIN_THRESHOLD`도 보정 전입니다.
 
 ## 플래너 연결 (Gemini, vLLM)
 
@@ -375,5 +375,5 @@ Compose에서만 쓰는 값(`.env`): `HF_CACHE`, `AUDYSSEY_{SEPARATION,JUDGE,GRO
 | `AUDYSSEY_SELVA_FT_ENCODER_FILE` | `encoder/S_O/best.pt` | SelSync 인코더 파일 |
 | `AUDYSSEY_SELVA_DEVICE` | `cuda` | 생성 장치 |
 | `AUDYSSEY_SELVA_STEPS` / `AUDYSSEY_SELVA_CFG` | `25` / `4.5` | Euler 생성 설정 |
-| `AUDYSSEY_SELVA_SINGLE_MAX_S` / `AUDYSSEY_SELVA_WINDOW_S` | `10` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초) |
+| `AUDYSSEY_SELVA_SINGLE_MAX_S` / `AUDYSSEY_SELVA_WINDOW_S` | `15` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초) |
 | `AUDYSSEY_GENERATION_GPU` | `0` | Compose 생성 서비스 GPU 번호 |

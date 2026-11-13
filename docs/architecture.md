@@ -74,6 +74,7 @@ flowchart TB
 `attempts`는 누적되며 seed는 `AUDYSSEY_SELVA_SEED + attempts - 1`입니다. 루프마다 최대 `1 + MAX_GENERATION_RETRIES`번 시도하고, 합격 시 멈추며 최고 `text_margin` 결과만 남깁니다(없으면 0, 동점이면 최신).
 단계 키는 `generate:<id>`, `score:<id>`이고, 각 시도의 점수는 score 메시지와 LangSmith에 남깁니다. 채점은 기존 `FilterResult`를 씁니다.
 형제 계획은 대사·자기 자신·자기가 대체하는 원본을 제외합니다. 텍스트 TargetSel만으로 합격을 판정합니다. `Source.replaces`는 대체 생성과 원래 분리 소스의 연결을 유지합니다.
+real 생성은 기본 15초까지 단일 패스이며, 그보다 길면 8초 창·1초 겹침으로 처리합니다. 마지막 창은 끝에 맞추고 전체 겹침을 선형 크로스페이드합니다.
 생성 뒤에는 residual을 다시 계산하지 않습니다. 원래 분리 stem을 다시 켜면 두 stem 모두 합쳐집니다.
 원본 코덱 패딩과 생성 길이가 다르면 믹스에 더할 때만 겹치는 길이를 사용하며, 내보내는 stem 길이는 유지합니다.
 
