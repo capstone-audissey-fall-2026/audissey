@@ -77,7 +77,7 @@ flowchart LR
 **기능 수정과 실험은 stub으로 하고, A100 80GB급 GPU는 실제 모델 통합 테스트 때만 빌립니다.**
 - stub은 GPU 없이 노트북에서 흐름 전체(업로드 → 플래닝 → 분리 → 검증 → 편집 → 합치기)를 1초 안에 돌립니다. 그래프, API, UI, 편집처럼 모델 품질과 상관없는 수정은 stub과 단위 테스트로 끝냅니다.
 - 내 모듈만 실제 모델로 바꿔 볼 때도 나머지는 stub으로 둡니다. 플래너는 Gemini API로 GPU 없이 실제 호출할 수 있습니다.
-- Compose는 6개 컨테이너(main, separation, judge, grounding, generation, vllm)입니다. 생성 추가 전 메모리는 약 50~70GB였고([실측](docs/status.md)), 생성 포함 최대 메모리는 측정 전입니다. 전체 GPU 테스트 때만 GPU를 빌리고, 끝나면 바로 내리고 반납합니다.
+- Compose는 6개 컨테이너(main, separation, judge, grounding, generation, vllm)입니다. 생성 포함 한 장 최대 메모리는 56.6GB였습니다(후보 4개, [실측](docs/status.md)). 전체 GPU 테스트 때만 GPU를 빌리고, 끝나면 바로 내리고 반납합니다.
 
 | 상황 | 필요한 것 | 안내 |
 |---|---|---|

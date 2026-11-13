@@ -12,10 +12,11 @@ uv run --project gen --locked audyssey tool-server --tool generation --impl real
 ```
 
 The lock uses torch/torchaudio 2.6.0+cu124, torchvision 0.21.0+cu124, numpy 2.0.2,
-transformers 4.51.3, open-clip-torch 3.3.0, av 17.0.1, and laion-clap 1.1.5.
-PyTorch packages use an explicit official CUDA 12.4 index. CLAP 1.1.5 resolves
-with numpy 2 without overriding any third-party dependency constraints; its
-embedding methods return numpy arrays and do not accept `use_tensor`.
+transformers 4.51.3, open-clip-torch 3.3.0, av 17.0.1, and laion-clap 1.1.6 from
+the `hkchengrex/CLAP@590b52d` fork (the one the SelSync evaluation used). PyPI
+laion-clap 1.1.5 cannot load `630k-best.pt` with transformers 4.51; the fork drops
+the stale `position_ids` key and supports numpy 2. PyTorch packages use an explicit
+official CUDA 12.4 index.
 
 SelVA is installed from upstream commit
 `d7d40a992aab58e7cf246055681a657e5d8b4a4d`. The reference fork's transformers

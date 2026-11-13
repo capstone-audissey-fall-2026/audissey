@@ -45,7 +45,7 @@ real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, numpy 2 / torc
 
 ## GPU 서버 한 대 (Docker Compose)
 
-Compose는 6개 컨테이너로 구성합니다. 생성 추가 전 5개 구성의 GPU 메모리는 약 50~70GB였습니다([실측](status.md)). 생성 추가 후 한 장에 모두 올렸을 때의 최대 메모리는 **측정 전**이며, Docker 빌드와 GPU E2E는 운영자가 확인해야 합니다.
+Compose는 6개 컨테이너로 구성합니다. A100 80GB 한 장에 모두 올렸을 때 최대 GPU 메모리는 56.6GB였고, 생성 컨테이너 몫은 약 6.7GB입니다([실측](status.md)).
 
 **1. 준비 (처음 한 번)**
 ```bash
@@ -90,7 +90,7 @@ nvidia-smi                # 메모리가 비었는지 확인
 
 **GPU 지정**
 - 도구별로 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_GENERATION_GPU`, `AUDYSSEY_VLLM_GPU`에 GPU 번호를 넣습니다. 번호가 같으면 그 GPU를 나눠 씁니다.
-- `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이고, vLLM 메모리 비율은 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(생성 추가 전 80GB A100에서 확인, 생성 포함 메모리는 측정 전).
+- `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이고, vLLM 메모리 비율은 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(생성 포함 6개 컨테이너를 80GB A100 한 장에서 확인).
 - vLLM에 GPU를 따로 주면 이 값을 `0.85` 정도로 올립니다.
 
 **가중치와 작업 파일**
@@ -185,7 +185,7 @@ AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run au
 - 15초까지 단일 생성, 그보다 길면 8초 창을 잇습니다. 마지막 창은 끝에 맞추므로 실제 겹침이 1초보다 길 수 있으며 전체 겹침을 선형 크로스페이드합니다. 44.1kHz 결과를 48kHz 모노로 리샘플하고 `round(duration * 48000)` 샘플에 맞춥니다.
 - CLAP 텍스트 TargetSel은 48kHz 모노 트랙 전체의 고정 10초 창(1초 겹침, 마지막은 끝에 정렬, 10초 이하는 한 창으로 CLAP 기본 패딩)별 L2 정규화 임베딩을 평균 후 다시 L2 정규화해 사용하며, 자기 설명이 가장 가깝고 margin이 임계값 이상이면 합격합니다. 형제가 없으면 margin 없이 합격합니다.
 - 실행 중 다운로드를 막기 위해 real 생성·채점은 `HF_HUB_OFFLINE=1`을 필수로 요구합니다. 모델은 첫 호출 뒤 재사용하며 GPU 호출은 한 번에 하나씩 실행합니다.
-- 8초/15초 품질·시간·메모리와 6개 컨테이너 E2E는 측정 전입니다. `GENERATION_MARGIN_THRESHOLD`도 보정 전입니다.
+- 시간·메모리 실측은 [현재 상태](status.md)에 있습니다. 15초 한 번 생성은 결과가 깨지지 않지만 8초 학습 모델이라 품질은 직접 들어 보고 판단합니다. `GENERATION_MARGIN_THRESHOLD`는 보정 전입니다.
 
 ## 플래너 연결 (Gemini, vLLM)
 
