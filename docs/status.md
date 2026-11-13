@@ -75,6 +75,9 @@ sv3-a100 A100 80GB × 1 (GPU 7). 생성 가중치는 `sogang-audyssey/selva-ft-s
 | Compose 6개 컨테이너 한 장, vLLM(Qwen2.5-VL-3B) 플래너, 후보 4개 | 유음 `sample.mp4` 첫 실행 154.5초에 ready(모델 로딩 포함), 두 번째 28.3초. ambience 분리 stem에 `generate` 47.3초(생성 모델 첫 로딩 포함) → 분리 stem 꺼짐, 생성 stem 추가, residual 그대로, render 0.3초 |
 | 같은 구성, 무음 14.2초 영상 | 70.3초에 ready. 효과음 1개 생성(형제 없음 → CLAP 생략, 합격), residual 없음, render 0.4초 |
 | 같은 구성 최대 GPU | 56.6GB. 생성 컨테이너 모델 로딩 1회 |
+| 생성을 tools 이미지로 합친 뒤(`gpu/` 환경: torch 2.11, numpy 1.26), 6개 컨테이너 한 장 | 유음 첫 실행 148.7초, 두 번째 28.2초, `generate` 13.5초, 무음 80.3초. 최대 GPU 56.6GB(변화 없음) |
+| 같은 이미지로 RunPod처럼 tools 컨테이너 하나(도구 4개 한 프로세스) + main + vLLM | 유음 128.6초, 무음 36.2초. 최대 GPU 48.5GB 중 vLLM 14.6GB → **도구 4개 약 34GB**(후보 4개, 시각 힌트 끔) |
+| SelVA torch 2.6 → 2.11 | 같은 seed에서 파형은 달라짐(상관 0.34–0.79), TargetSel margin 0.27·0.17·0.47·0.57로 비슷, 모두 합격. 8초 생성 3.5초 그대로 |
 
 - 3B vLLM 플래너는 설명란에 검증 메시지 같은 문장을 넣는 등 품질이 낮았습니다. 생성 프롬프트는 이 설명을 그대로 쓰므로 데모에는 Gemini 플래너를 권장합니다.
 - 8초 방송 영상에 "footsteps"를 생성했을 때 margin 0.05(합격, 소리 거의 없음)였습니다. `AUDYSSEY_GENERATION_MARGIN_THRESHOLD`(기본 0.0) 보정 때 참고합니다.

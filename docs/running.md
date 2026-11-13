@@ -41,7 +41,7 @@ AUDYSSEY_TOOL_TOKEN=local-test uv run audyssey tool-server --tool generation --i
 AUDYSSEY_TOOL_TOKEN=local-test AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run audyssey serve
 ```
 
-real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, numpy 2 / torch 2.6 전용 `gen/` 환경과 `audyssey-generation` 이미지로 분리합니다. 현재 RunPod 구성은 생성 도구를 포함하지 않습니다. RunPod에서 main만 띄울 때는 `AUDYSSEY_GENERATOR=stub`으로 둡니다. 별도 생성 Pod 구성과 검증은 이후에 진행합니다.
+real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, 다른 GPU 도구와 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다.
 
 ## GPU 서버 한 대 (Docker Compose)
 
@@ -61,7 +61,7 @@ docker compose up -d      # 백그라운드로 실행
 docker compose logs -f vllm   # "Application startup complete"가 뜨면 준비 끝 (약 1~2분). Ctrl+C는 로그 보기만 멈춤
 ```
 
-main, separation, judge, grounding, generation, vllm 컨테이너 6개가 뜹니다. 새 `audyssey-generation` GHCR 패키지는 첫 게시 뒤 공개 상태인지 확인하고, 비공개면 GitHub 패키지 설정에서 공개로 전환합니다. 이미지에는 가중치가 없습니다.
+main, separation, judge, grounding, generation, vllm 컨테이너 6개가 뜹니다. generation 컨테이너는 separation·judge·grounding과 같은 `audyssey-tools` 이미지를 실행 명령만 바꿔 씁니다. 이미지에는 가중치가 없습니다.
 플래너를 vLLM 대신 Gemini로 쓰려면 `.env`에 `GOOGLE_API_KEY`를 넣고 vLLM 없이 띄웁니다.
 ```bash
 AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
@@ -106,16 +106,16 @@ nvidia-smi                # 메모리가 비었는지 확인
 ## 노트북 + RunPod
 
 RunPod Pod 안에서는 Docker Compose를 쓸 수 없습니다.
-그래서 Pod에서는 tools 이미지의 기본 명령으로 도구 3개를 한 프로세스에 띄우고, 노트북에서는 main만 띄웁니다.
+그래서 Pod에서는 tools 이미지의 기본 명령으로 도구 4개(분리·Judge·그라운딩·생성)를 한 프로세스에 띄우고, 노트북에서는 main만 띄웁니다.
 
 | RunPod 설정 | 값 |
 |---|---|
 | Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` (공개 이미지) |
-| GPU | 1장, CUDA 12.8 드라이버. 기본 설정(시각 힌트 끔)에서는 48GB 이상, 시각 힌트를 켜면 80GB 권장 ([현재 상태](status.md#인프라배포) 참고) |
+| GPU | 1장, CUDA 12.8 드라이버. 기본 설정(시각 힌트 끔, 도구 4개)에서 실측 약 34GB라 48GB 이상, 시각 힌트를 켜면 80GB 권장 ([현재 상태](status.md) 참고) |
 | Expose HTTP ports | `8700` |
-| Container start command | 비워 둠 (이미지 기본 명령이 분리·Judge·그라운딩을 함께 실행) |
+| Container start command | 비워 둠 (이미지 기본 명령이 분리·Judge·그라운딩·생성을 함께 실행) |
 | Network volume | 가중치를 미리 받아 둔 볼륨을 `/workspace`에 연결. Pod를 반납해도 볼륨은 남으므로 가중치를 다시 받지 않아도 됨 |
-| 환경변수 | `HF_HOME=/workspace/huggingface`, `HF_HUB_OFFLINE=1`, `CUDA_VISIBLE_DEVICES=0`, 모델 ID 3개([가중치 준비](#가중치-준비)) |
+| 환경변수 | `HF_HOME=/workspace/huggingface`, `HF_HUB_OFFLINE=1`, `CUDA_VISIBLE_DEVICES=0`, 모델 ID([가중치 준비](#가중치-준비)). 생성 FT 가중치는 비공개 저장소라 팀 HF 조직 멤버의 토큰으로 볼륨에 미리 받아 둠 |
 | 비밀값 | `AUDYSSEY_TOOL_TOKEN`은 공유 템플릿에 넣지 말고 RunPod secrets로 넣음 |
 
 템플릿은 Templates → New Template에 저장해 두고, Pod를 만들 때 고릅니다([공식 안내](https://docs.runpod.io/pods/templates/manage-templates)).
@@ -126,7 +126,7 @@ AUDYSSEY_TOOL_TOKEN=<Pod와 같은 토큰>
 AUDYSSEY_SEPARATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 AUDYSSEY_FILTER_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 AUDYSSEY_GROUNDING_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
-AUDYSSEY_GENERATOR=stub  # 현재 RunPod 구성에는 생성 서버가 없음
+AUDYSSEY_GENERATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 # 플래너는 Gemini 권장
 AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
@@ -170,13 +170,13 @@ uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.m
 
 ### 생성 모듈 (SelVA FT + SelSync)
 
-분리 환경과 섞지 않고 [gen/](../gen/README.md)의 잠금 파일을 사용합니다. 가중치는 아래 절의 명령으로 미리 준비합니다.
+다른 GPU 도구와 같은 `gpu/` 환경을 씁니다. 가중치는 아래 절의 명령으로 미리 준비합니다.
 
 ```bash
-uv sync --project gen --locked
+uv sync --project gpu --locked
 export HF_HOME=/home/common/huggingface HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0
 export AUDYSSEY_TOOL_TOKEN=<임의-토큰>
-uv run --project gen --locked audyssey tool-server --tool generation --impl real --host 127.0.0.1 --port 8701
+uv run --project gpu --locked audyssey tool-server --tool generation --impl real --host 127.0.0.1 --port 8701
 # 다른 터미널: 같은 AUDYSSEY_TOOL_TOKEN을 설정
 AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run audyssey serve
 ```

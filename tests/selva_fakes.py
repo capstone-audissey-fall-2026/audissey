@@ -57,6 +57,7 @@ def runtime(duration=10):
         load=Mock(side_effect=lambda path, **kwargs: {'state_dict': path} if path.endswith('best.pt') else path),
         Generator=Mock(return_value=SimpleNamespace(manual_seed=Mock())),
         cat=lambda tensors, dim=0: Tensor(np.concatenate([t.data for t in tensors], axis=dim)),
+        serialization=SimpleNamespace(safe_globals=Mock(side_effect=lambda globals_: nullcontext())),
     )
     evaluation = SimpleNamespace(
         all_model_cfg={'large_44k': SimpleNamespace(model_name='large_44k', mode='44k', seq_cfg=SequenceConfig())},

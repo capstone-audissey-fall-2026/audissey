@@ -193,6 +193,9 @@ class SelvaGenerationTests(unittest.TestCase):
         fake.hub.hf_hub_download.assert_called_once_with(repo_id="lukewys/laion_clap", filename="630k-best.pt", local_files_only=True)
         fake.clap.load_ckpt.assert_called_once_with('/cache/630k-best.pt')
         fake.modules['laion_clap'].CLAP_Module.assert_called_once_with(enable_fusion=False, device='cuda')
+        # 630k-best.pt pickles numpy scalars; allow exactly those under weights_only loading.
+        (allowed,), _ = fake.torch.serialization.safe_globals.call_args
+        self.assertIn('numpy.core.multiarray.scalar', [g[1] for g in allowed if isinstance(g, tuple)])
 
     def test_generate_matches_sync_segments_at_fractional_duration(self):
         fake = runtime(9.28)
