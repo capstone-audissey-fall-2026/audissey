@@ -63,6 +63,22 @@
 | sv3-a100, A100 80GB × 1 | 컨테이너 5개를 한 장에, 공식 large-tv·Judge·SAM3.1, 후보 4개, vLLM 0.2 | 201초에 ready, Judge 4.95 통과, 최대 GPU 69.1GB |
 | sv3-a100, A100 80GB × 1 | GHCR 이미지(`65bd7a3`), 시각 힌트 끔(기본), 후보 4개, vLLM 0.2 | 131초에 ready, SAM3 호출 없음, Judge 5.01 통과, 오류 0, 최대 GPU 49.9GB |
 
+### 생성 경로 (SelVA FT8 S_O + SelSync)
+
+sv3-a100 A100 80GB × 1 (GPU 7). 생성 가중치는 `sogang-audyssey/selva-ft-selsync`(비공개 FT) + `jnwnlee/SelVA`(베이스), CLAP은 `hkchengrex/CLAP@590b52d`.
+
+| 조건 | 결과 |
+|---|---|
+| 생성 단독 (`gen/` 환경), 8초 영상 | 첫 호출 44.3초(모델 로딩 포함), 두 번째 3.5초. 채점 첫 6.3초(CLAP 로딩), 이후 0.02초 |
+| 생성 단독, 14.2초 영상을 한 번에 | 14.2초, 15.2초. 결과 길이 14.2초, 같은 트랙 재채점 점수 동일 |
+| 생성 단독 최대 GPU | 6.7GB (생성기 + 인코더 + VAE + CLAP) |
+| Compose 6개 컨테이너 한 장, vLLM(Qwen2.5-VL-3B) 플래너, 후보 4개 | 유음 `sample.mp4` 첫 실행 154.5초에 ready(모델 로딩 포함), 두 번째 28.3초. ambience 분리 stem에 `generate` 47.3초(생성 모델 첫 로딩 포함) → 분리 stem 꺼짐, 생성 stem 추가, residual 그대로, render 0.3초 |
+| 같은 구성, 무음 14.2초 영상 | 70.3초에 ready. 효과음 1개 생성(형제 없음 → CLAP 생략, 합격), residual 없음, render 0.4초 |
+| 같은 구성 최대 GPU | 56.6GB. 생성 컨테이너 모델 로딩 1회 |
+
+- 3B vLLM 플래너는 설명란에 검증 메시지 같은 문장을 넣는 등 품질이 낮았습니다. 생성 프롬프트는 이 설명을 그대로 쓰므로 데모에는 Gemini 플래너를 권장합니다.
+- 8초 방송 영상에 "footsteps"를 생성했을 때 margin 0.05(합격, 소리 거의 없음)였습니다. `AUDYSSEY_GENERATION_MARGIN_THRESHOLD`(기본 0.0) 보정 때 참고합니다.
+
 ### 시각 힌트를 기본으로 끈 뒤
 
 sv3-a100 A100 80GB × 1, 한 프로세스에서 실제 모델 실행, Gemini 2.5 Flash 플래너, large-tv, 후보 1개.
