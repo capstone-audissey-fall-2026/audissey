@@ -111,7 +111,7 @@ RunPod Pod 안에서는 Docker Compose를 쓸 수 없습니다.
 | RunPod 설정 | 값 |
 |---|---|
 | Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` (공개 이미지) |
-| GPU | 1장, CUDA 12.8 드라이버. 기본 설정(시각 힌트 끔)에서는 48GB 이상, 시각 힌트를 켜면 80GB 권장 ([현재 상태](status.md#인프라배포) 참고) |
+| GPU | 1장, CUDA 12.8 드라이버. 기본 설정(시각 힌트 끔, 도구 4개)에서 실측 약 34GB라 48GB 이상, 시각 힌트를 켜면 80GB 권장 ([현재 상태](status.md) 참고) |
 | Expose HTTP ports | `8700` |
 | Container start command | 비워 둠 (이미지 기본 명령이 분리·Judge·그라운딩·생성을 함께 실행) |
 | Network volume | 가중치를 미리 받아 둔 볼륨을 `/workspace`에 연결. Pod를 반납해도 볼륨은 남으므로 가중치를 다시 받지 않아도 됨 |
