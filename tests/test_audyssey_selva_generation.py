@@ -155,3 +155,11 @@ class SelvaGenerationTests(unittest.TestCase):
         fake.hub.hf_hub_download.assert_called_once_with(repo_id="lukewys/laion_clap", filename="630k-best.pt", local_files_only=True)
         fake.clap.load_ckpt.assert_called_once_with('/cache/630k-best.pt')
         fake.modules['laion_clap'].CLAP_Module.assert_called_once_with(enable_fusion=False, device='cuda')
+
+    def test_generate_matches_sync_segments_at_fractional_duration(self):
+        fake = runtime(9.28)
+        out = self.run_generate(fake, 9.28)
+        self.assertEqual(read_wav(out).shape, (445440, 1))
+        self.assertEqual(fake.evaluation.generate.call_args.args[1].shape[1], 232)
+        fake.encoder.update_seq_lengths.assert_called_once_with(video_seq_len=224)
+        self.assertEqual(fake.generator.update_seq_lengths.call_args.args[2], 224)

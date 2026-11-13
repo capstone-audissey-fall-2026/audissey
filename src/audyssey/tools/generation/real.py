@@ -160,7 +160,8 @@ def generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path:
                     sync = torch.cat(
                         [sync, sync[-1:].expand(16 - sync.shape[0], *sync.shape[1:])]
                     )
-                seq.duration = sync.shape[0] / 25
+                # Avoid losing one frame when SequenceConfig multiplies duration by 25.
+                seq.duration = math.nextafter(sync.shape[0] / 25, math.inf)
                 generator.update_seq_lengths(
                     seq.latent_seq_len, seq.clip_seq_len, seq.sync_seq_len
                 )

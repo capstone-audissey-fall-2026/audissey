@@ -1,4 +1,5 @@
 """CPU doubles for the pinned SelVA and CLAP tensor/model boundaries."""
+import math
 from contextlib import nullcontext
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -28,9 +29,18 @@ class Tensor(AudioTensor):
 class SequenceConfig:
     duration: float = 8
     sampling_rate: int = 44100
-    latent_seq_len: int = 345
-    clip_seq_len: int = 64
-    sync_seq_len: int = 192
+
+    @property
+    def latent_seq_len(self):
+        return math.ceil(self.duration * 44100 / 1024)
+
+    @property
+    def clip_seq_len(self):
+        return int(self.duration * 8)
+
+    @property
+    def sync_seq_len(self):
+        return int(((self.duration * 25 - 16) // 8 + 1) * 8)
 
 
 def runtime(duration=10):
