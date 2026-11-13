@@ -61,9 +61,42 @@ class GenerationReferencesTests(unittest.TestCase):
 
     def test_remote_sends_repeated_reference_uploads(self):
         import httpx
+        first = write_wav(self.root / 'first.wav', np.ones(100))
+        second = write_wav(self.root / 'second.wav', np.ones(100))
         with patch.object(remote, 'post', return_value=httpx.Response(200, json={'passed': True})) as post:
-            result = remote.score_generation(self.wav, self.plan, [], self.wav, [self.wav, self.wav])
+            result = remote.score_generation(self.wav, self.plan, [], self.wav, [first, second])
         self.assertTrue(result.passed)
         uploads = post.call_args.args[2]
         self.assertEqual([name for name, _ in uploads], ['track', 'reference', 'references', 'references'])
         self.assertTrue(all(value[1] == self.wav.read_bytes() for _, value in uploads))
+
+    def test_remote_does_not_compare_target_reference_to_itself(self):
+        import httpx
+        other = write_wav(self.root / 'other.wav', np.zeros(100))
+        with patch.object(remote, 'post', return_value=httpx.Response(200, json={'passed': True})) as post:
+            remote.score_generation(self.wav, self.plan, [], self.wav, [self.wav, other])
+        competitors = [value for name, value in post.call_args.args[2] if name == 'references']
+        self.assertEqual(len(competitors), 1)
+        self.assertEqual(competitors[0][1], other.read_bytes())
+
+    def test_remote_targetsel_matches_direct_scoring(self):
+        from audyssey.tools.generation import real
+        from tests.selva_fakes import runtime
+        fake = runtime()
+        fake.clap.get_audio_embedding_from_data.side_effect = lambda x: np.array([[1., 0.]]) if x[0, 0] else np.array([[0., 1.]])
+        other = write_wav(self.root / 'other.wav', np.zeros(100))
+        real._load_clap.cache_clear()
+        self.addCleanup(real._load_clap.cache_clear)
+        with patch.dict(os.environ, {'HF_HUB_OFFLINE': '1'}), patch.dict('sys.modules', fake.modules), TestClient(create_tool_app(['generation'], 'real', '')) as client:
+            def post(url, path, files, data, token, timeout):
+                response = client.post(path, files=files, data=data)
+                self.assertEqual(response.status_code, 200, response.text)
+                return response
+            direct = real.score_generation(self.wav, self.plan, [], self.wav, [self.wav, other])
+            with patch.object(remote, 'post', side_effect=post):
+                transported = remote.score_generation(self.wav, self.plan, [], self.wav, [self.wav, other])
+            self.assertEqual(direct.scores['ref_margin'], 1)
+            self.assertEqual(transported, direct)
+            with patch.object(remote, 'post', side_effect=post):
+                single = remote.score_generation(self.wav, self.plan, [], self.wav, [self.wav])
+            self.assertNotIn('ref_margin', single.scores)

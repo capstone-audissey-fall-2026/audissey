@@ -36,6 +36,7 @@ def score_generation(
     uploads.extend(
         ("references", ("reference.wav", path.read_bytes(), "audio/wav"))
         for path in reference_stems or []
+        if path != reference_stem
     )
     response = post(
         settings.generator_url,
