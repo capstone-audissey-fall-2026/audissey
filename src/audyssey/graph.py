@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from functools import wraps
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from langsmith import traceable
@@ -70,7 +71,134 @@ def update_step(job: Job, ctx: Context, step: StepStatus) -> None:
     ctx.store.save(job)
 
 
+def siblings(job: Job, source: Source) -> list[SourcePlan]:
+    return [
+        other.plan
+        for other in job.sources
+        if other.id not in {source.id, source.replaces}
+        and other.plan.kind != "dialogue"
+    ]
+
+
+def generate_source(job: Job, source: Source, ctx: Context) -> None:
+    if source.plan.kind == "dialogue":
+        source.status, source.track_path = "skipped", None
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key=f"generate:{source.id}",
+                status="done",
+                message="dialogue is not generated",
+            ),
+        )
+        return
+    directory = ctx.store.dir(job.id)
+    maximum = 1 + ctx.settings.max_generation_retries
+    source.status = "running"
+    best_path: Path | None = None
+    best_result = None
+    attempts: list[Path] = []
+    messages: list[str] = []
+    key = f"generate:{source.id}"
+    reference = job.find_source(source.replaces) if source.replaces else None
+    try:
+        for round_number in range(1, maximum + 1):
+            source.attempts += 1
+            key = f"generate:{source.id}"
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key, status="running", round=round_number, max_rounds=maximum
+                ),
+            )
+            out = directory / f"tracks/{source.id}.attempt{source.attempts}.wav"
+            attempts.append(out)
+            path = ctx.tools.generate(
+                directory / job.video_path,
+                source.plan,
+                out,
+                ctx.settings.selva_seed + source.attempts - 1,
+            )
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key, status="done", round=round_number, max_rounds=maximum
+                ),
+            )
+            key = f"score:{source.id}"
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key,
+                    status="running",
+                    round=round_number,
+                    max_rounds=maximum,
+                    message="; ".join(messages),
+                ),
+            )
+            result = ctx.tools.score_generation(
+                path,
+                source.plan,
+                siblings(job, source),
+                directory / reference.track_path
+                if reference and reference.track_path
+                else None,
+            )
+            messages.append(
+                f"attempt {source.attempts}: correct={result.scores.get('text_correct')} "
+                f"margin={result.scores.get('text_margin')} {result.reason}".rstrip()
+            )
+            if best_result is None or result.scores.get(
+                "text_margin", 0
+            ) >= best_result.scores.get("text_margin", 0):
+                best_path, best_result = path, result
+            update_step(
+                job,
+                ctx,
+                StepStatus(
+                    key=key,
+                    status="done" if result.passed else "warning",
+                    round=round_number,
+                    max_rounds=maximum,
+                    message="; ".join(messages),
+                ),
+            )
+            if result.passed:
+                break
+        if best_path is None:
+            raise RuntimeError("generation produced no track")
+        final = directory / f"tracks/{source.id}.wav"
+        best_path.replace(final)
+        source.track_path = str(final.relative_to(directory))
+        source.filter = best_result
+        source.status = "done"
+    except Exception as exc:
+        source.status, source.track_path = "failed", None
+        update_step(
+            job,
+            ctx,
+            StepStatus(
+                key=key,
+                status="failed",
+                round=round_number,
+                max_rounds=maximum,
+                message=str(exc),
+            ),
+        )
+    finally:
+        for path in attempts:
+            path.unlink(missing_ok=True)
+    ctx.store.save(job)
+
+
 def process_source(job: Job, source: Source, ctx: Context) -> None:
+    if job.silent or source.origin == "generated":
+        generate_source(job, source, ctx)
+        return
     directory = ctx.store.dir(job.id)
     maximum = ctx.settings.max_separation_retries + 1
     source.status = "running"
@@ -186,7 +314,11 @@ def refresh_residual(job: Job, ctx: Context) -> None:
     update_step(job, ctx, StepStatus(key="residual", status="running"))
     compute_residual(
         directory / job.audio_path,
-        [directory / s.track_path for s in job.sources if s.track_path],
+        [
+            directory / s.track_path
+            for s in job.sources
+            if s.origin == "separated" and s.track_path
+        ],
         directory / "residual.wav",
     )
     job.residual.path = "residual.wav"
@@ -254,7 +386,11 @@ def analyze(
         for i, plan_item in enumerate(plans, 1):
             source = previous.get(plan_item.name)
             if source is None:
-                source = Source(id=f"s{i}", plan=plan_item)
+                source = Source(
+                    id=f"s{i}",
+                    plan=plan_item,
+                    origin="generated" if job.silent else "separated",
+                )
             else:
                 source.id, source.plan = f"s{i}", plan_item
             sources.append(source)

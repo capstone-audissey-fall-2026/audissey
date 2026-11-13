@@ -336,3 +336,123 @@ class GraphTests(unittest.TestCase):
         job = graph.analyze(self.job, self.ctx)
         self.assertFalse(job.silent)
         self.assertTrue((self.directory / job.residual.path).is_file())
+
+    def generation_setup(self, results):
+        from unittest.mock import Mock
+        from audyssey.media import write_wav
+        source = Source(id="s1", origin="generated", plan=SourcePlan(name="rain", kind="sfx", description="rain"))
+        self.job.sources = [source]
+        generate = Mock(side_effect=lambda video, plan, out, seed: write_wav(out, np.full((100, 1), seed / 100)))
+        score = Mock(side_effect=results)
+        self.ctx.tools = replace(self.ctx.tools, generate=generate, score_generation=score)
+        return source, generate, score
+
+    def test_generation_retries_then_keeps_best_margin(self):
+        from audyssey.contracts import FilterResult
+        source, _, _ = self.generation_setup([FilterResult(passed=False, scores={"text_margin": margin}) for margin in [0.1, 0.3, 0.2]])
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual(source.status, "done")
+        self.assertEqual(source.filter.scores["text_margin"], 0.3)
+        np.testing.assert_allclose(read_wav(self.directory / source.track_path), 0.43)
+        self.assertEqual([p.name for p in (self.directory / "tracks").iterdir()], ["s1.wav"])
+        message = next(s.message for s in self.job.steps if s.key == "score:s1")
+        for n in [1, 2, 3]:
+            self.assertIn(f"attempt {n}:", message)
+
+    def test_generation_seed_counts_attempts(self):
+        from audyssey.contracts import FilterResult
+        source, generate, _ = self.generation_setup([FilterResult(passed=False)] * 6)
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual([c.args[3] for c in generate.call_args_list], [42, 43, 44])
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual([c.args[3] for c in generate.call_args_list], [42, 43, 44, 45, 46, 47])
+        self.assertEqual(source.attempts, 6)
+
+    def test_generation_stops_on_pass(self):
+        from audyssey.contracts import FilterResult
+        source, generate, _ = self.generation_setup([FilterResult(passed=True)])
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual(generate.call_count, 1)
+        self.assertEqual(source.status, "done")
+        self.assertTrue(source.filter.passed)
+
+    def test_generation_no_margin_keeps_passing_attempt(self):
+        from audyssey.contracts import FilterResult
+        source, _, _ = self.generation_setup([FilterResult(passed=False), FilterResult(passed=True)])
+        graph.process_source(self.job, source, self.ctx)
+        self.assertTrue(source.filter.passed)
+        np.testing.assert_allclose(read_wav(self.directory / source.track_path), 0.43)
+
+    def test_generation_siblings_and_reference(self):
+        from audyssey.contracts import FilterResult
+        source, _, score = self.generation_setup([FilterResult(passed=True)])
+        original = Source(id="s2", plan=SourcePlan(name="original", kind="sfx", description="rain"), track_path="original.wav")
+        other = Source(id="s3", plan=SourcePlan(name="other", kind="music", description="music"))
+        dialogue = Source(id="s4", plan=SourcePlan(name="voice", kind="dialogue", description="voice"))
+        source.replaces = original.id
+        self.job.sources += [original, other, dialogue]
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual(score.call_args.args[2], [other.plan])
+        self.assertEqual(score.call_args.args[3], self.directory / "original.wav")
+
+    def test_generation_error_isolated_and_attempt_files_removed(self):
+        from unittest.mock import Mock
+        source, _, _ = self.generation_setup([])
+        self.ctx.tools = replace(self.ctx.tools, score_generation=Mock(side_effect=RuntimeError("score failed")))
+        graph.process_source(self.job, source, self.ctx)
+        self.assertEqual(source.status, "failed")
+        self.assertIsNone(source.track_path)
+        self.assertEqual(list((self.directory / "tracks").glob("*.attempt*.wav")), [])
+        self.assertEqual(next(s.status for s in self.job.steps if s.key == "score:s1"), "failed")
+
+    def test_silent_job_generates_non_dialogue_sources(self):
+        from unittest.mock import Mock
+        make_video(self.directory / self.job.video_path, seconds=1, audio=False)
+        separate = Mock(side_effect=AssertionError("silent job must not separate"))
+        self.ctx.tools = replace(self.ctx.tools, separate=separate)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready", job.error)
+        self.assertTrue(all(s.origin == "generated" for s in job.sources))
+        for source in job.sources:
+            if source.plan.kind == "dialogue":
+                self.assertEqual(source.status, "skipped")
+                self.assertIsNone(source.track_path)
+                self.assertIn("dialogue is not generated", next(s.message for s in job.steps if s.key == f"generate:{source.id}"))
+            else:
+                self.assertEqual(source.status, "done")
+                self.assertTrue(source.filter.passed)
+        separate.assert_not_called()
+        self.assertIsNone(job.residual.path)
+        graph.handle_command(job, Render(), self.ctx)
+        self.assertEqual(read_wav(self.directory / job.outputs.mix_wav).shape, (48000, 2))
+        self.assertTrue((self.directory / job.outputs.video_mp4).is_file())
+
+    def test_silent_job_with_only_dialogue_is_ready(self):
+        make_video(self.directory / self.job.video_path, seconds=1, audio=False)
+        self.ctx.tools = replace(self.ctx.tools, plan=lambda *args: [SourcePlan(name="voice", kind="dialogue", description="voice")])
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready", job.error)
+        self.assertEqual(job.sources[0].status, "skipped")
+        graph.handle_command(job, Render(), self.ctx)
+        self.assertEqual(job.outputs.stems, [])
+        np.testing.assert_array_equal(read_wav(self.directory / job.outputs.mix_wav), 0)
+
+    def test_refresh_residual_ignores_generated_sources(self):
+        from audyssey.media import write_wav
+        job = graph.analyze(self.job, self.ctx)
+        original_residual = read_wav(self.directory / job.residual.path)
+        write_wav(self.directory / "generated.wav", np.ones((len(original_residual), 1)))
+        job.sources.append(Source(id="s4", origin="generated", plan=SourcePlan(name="extra", kind="sfx", description="extra"), track_path="generated.wav"))
+        job.sources[0].keep = False
+        graph.refresh_residual(job, self.ctx)
+        np.testing.assert_array_equal(read_wav(self.directory / job.residual.path), original_residual)
+
+    def test_sound_job_unchanged(self):
+        from unittest.mock import Mock
+        generate, score = Mock(), Mock()
+        self.ctx.tools = replace(self.ctx.tools, generate=generate, score_generation=score)
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready", job.error)
+        self.assertTrue(all(s.origin == "separated" for s in job.sources))
+        generate.assert_not_called()
+        score.assert_not_called()
