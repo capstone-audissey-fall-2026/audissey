@@ -67,3 +67,28 @@ class ContractsTests(unittest.TestCase):
         for box in [(-0.1, 0, 1, 1), (0.8, 0, 0.2, 1)]:
             with self.assertRaises(ValidationError):
                 GroundResult(found=True, box=box)
+
+    def test_generate_command_parses(self):
+        from audyssey.contracts import Generate
+        command = parse_command({"type": "generate", "source_id": "s1"})
+        self.assertIsInstance(command, Generate)
+        self.assertIsNone(command.description)
+
+    def test_add_source_method_defaults_to_separate(self):
+        command = parse_command({"type": "add_source", "plan": {"name": "new", "kind": "sfx", "description": "sound"}})
+        self.assertEqual(command.method, "separate")
+        with self.assertRaises(ValidationError):
+            parse_command({"type": "add_source", "method": "unknown", "plan": command.plan.model_dump()})
+
+    def test_source_origin_defaults_to_separated(self):
+        source = Source(id="s1", plan=SourcePlan(name="a", kind="sfx", description="sound"))
+        self.assertEqual(source.origin, "separated")
+        self.assertIsNone(source.replaces)
+        generated = Source.model_validate({**source.model_dump(), "origin": "generated", "replaces": "s2", "status": "skipped"})
+        self.assertEqual((generated.origin, generated.replaces, generated.status), ("generated", "s2", "skipped"))
+
+    def test_old_job_json_still_loads(self):
+        job = Job.model_validate_json('{"id":"old","video_path":"input.mp4","sources":[{"id":"s1","plan":{"name":"a","kind":"sfx","description":"sound"}}]}')
+        self.assertFalse(job.silent)
+        self.assertEqual(job.sources[0].origin, "separated")
+        self.assertIsNone(job.sources[0].replaces)

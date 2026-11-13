@@ -68,12 +68,14 @@ class FilterResult(Model):
     suggestion: SourcePlan | None = None
 
 
-SourceStatus = Literal["pending", "running", "done", "failed"]
+SourceStatus = Literal["pending", "running", "done", "failed", "skipped"]
 
 
 class Source(Model):
     id: str
     plan: SourcePlan
+    origin: Literal["separated", "generated"] = "separated"
+    replaces: str | None = None
     track_path: str | None = None
     filter: FilterResult | None = None
     status: SourceStatus = "pending"
@@ -153,9 +155,16 @@ class Reseparate(Model):
     spans: list[Span] | None = None
 
 
+class Generate(Model):
+    type: Literal["generate"] = "generate"
+    source_id: str
+    description: str | None = None
+
+
 class AddSource(Model):
     type: Literal["add_source"] = "add_source"
     plan: SourcePlan
+    method: Literal["separate", "generate"] = "separate"
 
 
 class Render(Model):
@@ -164,7 +173,7 @@ class Render(Model):
 
 
 Command = Annotated[
-    Keep | Drop | SetGain | SetPitch | Reseparate | AddSource | Render,
+    Keep | Drop | SetGain | SetPitch | Reseparate | Generate | AddSource | Render,
     Field(discriminator="type"),
 ]
 
