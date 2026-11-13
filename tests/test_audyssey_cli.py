@@ -61,3 +61,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         with TestClient(run.call_args.args[0]) as client:
             self.assertEqual(client.get('/health').json()['tools'], ['grounding'])
+
+    def test_tool_server_accepts_generation(self):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        with patch('audyssey.cli.uvicorn.run') as run:
+            result = CliRunner().invoke(app, ['tool-server', '--tool', 'generation'])
+        self.assertEqual(result.exit_code, 0, result.output)
+        with TestClient(run.call_args.args[0]) as client:
+            self.assertEqual(client.get('/health').json()['tools'], ['generation'])
+            self.assertEqual({r.path for r in client.app.routes} & {'/generate', '/score'}, {'/generate', '/score'})
