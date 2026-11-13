@@ -88,3 +88,14 @@ class SettingsTests(unittest.TestCase):
         for count in (0, 17):
             with self.assertRaises(ValidationError):
                 Settings(planner_frames=count)
+
+    def test_generation_settings_from_env(self):
+        values = {"GENERATOR": "remote", "GENERATOR_URL": "http://generation:8700", "SELVA_BASE_MODEL": "base", "SELVA_FT_MODEL": "private/ft", "SELVA_FT_GENERATOR_FILE": "g.pth", "SELVA_FT_ENCODER_FILE": "e.pt", "SELVA_DEVICE": "cpu", "SELVA_STEPS": "5", "SELVA_CFG": "3.5", "SELVA_SEED": "17", "SELVA_SINGLE_MAX_S": "9", "SELVA_WINDOW_S": "7", "MAX_GENERATION_RETRIES": "0", "GENERATION_MARGIN_THRESHOLD": "0.2"}
+        with patch.dict(os.environ, {"AUDYSSEY_" + k: v for k, v in values.items()}, clear=True):
+            settings = Settings()
+        for name, expected in values.items():
+            self.assertEqual(str(getattr(settings, name.lower())), str(float(expected)) if name in {"SELVA_CFG", "SELVA_SINGLE_MAX_S", "SELVA_WINDOW_S", "GENERATION_MARGIN_THRESHOLD"} else expected)
+        with self.assertRaises(ValidationError):
+            Settings(max_generation_retries=-1)
+        with self.assertRaises(ValidationError):
+            Settings(generator="unknown")
