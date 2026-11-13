@@ -43,46 +43,135 @@ AUDYSSEY_TOOL_TOKEN=local-test AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=
 
 real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, 다른 GPU 도구와 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다.
 
-## GPU 서버 한 대 (Docker Compose)
+## 실제 모델로 실행하기 (팀원용)
 
-Compose는 6개 컨테이너로 구성합니다. A100 80GB 한 장에 모두 올렸을 때 최대 GPU 메모리는 56.6GB였고, 생성 컨테이너 몫은 약 6.7GB입니다([실측](status.md)).
+실제 모델 전체 테스트는 아래 두 방법 중 하나로 합니다. 기능 수정과 실험은 [stub](#gpu-없이-stub)으로 하고, GPU는 실제 테스트 때만 빌려서 끝나면 바로 반납합니다.
 
-**1. 준비 (처음 한 번)**
+| 방법 | 언제 | GPU | 상태 |
+|---|---|---|---|
+| **A. 내 GPU 서버** (sv3 등) | Docker와 GPU가 있는 서버를 쓸 수 있을 때 | 1장. 80GB면 6개 컨테이너가 한 장에 들어감(실측 최대 56.6GB) | sv3-a100에서 새 폴더·공개 이미지만으로 검증 |
+| **B. 노트북 + RunPod** | 서버가 없을 때 | Pod 1개, 48GB 이상(도구 4개 실측 약 34GB) | 같은 이미지·구성을 sv3에서 흉내 내 검증. RunPod 계정에서는 아직 직접 확인 전 |
+
+### 0. 공통 준비 (사람마다 처음 한 번)
+
+1. **Hugging Face 계정**을 만들고, 아래 모델 페이지에서 각각 접근 승인(SAM License)을 요청합니다. 승인에 하루 정도 걸릴 수 있습니다.
+   - `facebook/sam-audio-large-tv`, `facebook/sam-audio-judge`, `facebook/sam3.1`
+2. **팀 HF 조직 `sogang-audyssey`에 가입**합니다. 관리자에게 HF 아이디를 알려 주고 초대를 수락합니다. 생성 FT 가중치(`sogang-audyssey/selva-ft-selsync`)는 비공개라 조직 멤버만 받을 수 있습니다.
+3. HF 설정 → Access Tokens에서 **읽기(Read) 토큰**을 만듭니다. 토큰은 가중치를 받을 때만 쓰고, 레포·`.env`·이미지·채팅에 넣지 않습니다.
+4. (Gemini 플래너를 쓸 때) [Google AI Studio](https://aistudio.google.com/apikey)에서 API 키를 만듭니다. 3B vLLM 플래너는 설명 품질이 낮아서 데모에는 Gemini를 권장합니다([실측](status.md)).
+
+> sv3-a100을 쓰면 2·3은 건너뛰어도 됩니다. 공용 캐시 `/home/common/huggingface`에 모든 가중치가 이미 있습니다.
+
+### A. 내 GPU 서버에서 (Docker Compose)
+
+필요한 것: Docker, [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), 디스크 약 100GB(이미지 약 60GB + 가중치 약 45GB).
+이미지는 공개라서 로그인 없이 받습니다. 직접 빌드하지 않습니다.
+
+**A-1. 코드와 설정 (처음 한 번)**
 ```bash
-cp .env.example .env      # .env는 커밋하지 않음
-# .env에서 AUDYSSEY_TOOL_TOKEN을 긴 임의 값으로, HF_CACHE를 가중치 캐시 경로로,
-# AUDYSSEY_*_GPU를 쓸 GPU 번호로 바꿈 (공용 서버라면 nvidia-smi로 비어 있는 GPU 확인)
+git clone https://github.com/capstone-audissey-fall-2026/audyssey.git && cd audyssey
+cp .env.example .env && chmod 600 .env    # .env는 커밋하지 않음
 ```
+`.env`에서 세 가지를 고칩니다.
+- `AUDYSSEY_TOOL_TOKEN`: 긴 임의 값 (`openssl rand -hex 24`의 결과)
+- `HF_CACHE`: 가중치 캐시 경로 (sv3는 `/home/common/huggingface` 그대로)
+- `AUDYSSEY_*_GPU`: 쓸 GPU 번호. 공용 서버라면 `nvidia-smi`로 **아무 프로세스도 없는 GPU**를 골라 다섯 줄 모두 같은 번호로 둡니다. 다른 사람이 쓰는 GPU에 올리면 메모리가 부족해 서로의 작업이 죽을 수 있습니다.
+- Gemini 플래너를 쓰면 `GOOGLE_API_KEY=<키>`도 넣습니다.
 
-**2. 띄우기**
+**A-2. 가중치 받기 (캐시마다 처음 한 번, sv3는 건너뜀)**
 ```bash
-docker compose pull       # 새 이미지 받기 (main 머지 때마다 갱신됨). 직접 빌드하려면 docker compose build
-docker compose up -d      # 백그라운드로 실행
-docker compose logs -f vllm   # "Application startup complete"가 뜨면 준비 끝 (약 1~2분). Ctrl+C는 로그 보기만 멈춤
+uv tool install 'huggingface_hub[cli]<1.0'   # 또는 pip install 'huggingface_hub[cli]<1.0'
+huggingface-cli login                          # 0-3의 읽기 토큰 입력
+HF_HOME=<HF_CACHE와 같은 경로> bash scripts/download-weights.sh   # vLLM 플래너도 쓰면 앞에 WITH_VLLM=1
 ```
+모든 줄이 `ok`로 끝나면 됩니다. 403이 나오면 0단계의 승인이나 조직 가입이 아직입니다.
 
-main, separation, judge, grounding, generation, vllm 컨테이너 6개가 뜹니다. generation 컨테이너는 separation·judge·grounding과 같은 `audyssey-tools` 이미지를 실행 명령만 바꿔 씁니다. 이미지에는 가중치가 없습니다.
-플래너를 vLLM 대신 Gemini로 쓰려면 `.env`에 `GOOGLE_API_KEY`를 넣고 vLLM 없이 띄웁니다.
+**A-3. 띄우기**
+```bash
+docker compose pull       # 새 이미지 받기 (main 머지 때마다 갱신됨)
+docker compose up -d      # 컨테이너 6개를 백그라운드로 실행
+docker compose logs -f vllm   # "Application startup complete"가 뜨면 준비 끝(약 1~2분). Ctrl+C는 로그 보기만 멈춤
+```
+Gemini 플래너를 쓰면 vLLM 없이 띄웁니다.
 ```bash
 AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
 AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
 docker compose up -d main separation judge grounding generation
 ```
 
-**3. 접속**
-- 서버에서: http://localhost:8600
-- 원격 서버라면 노트북에서 SSH 터널을 열고 같은 주소로 접속합니다: `ssh -L 8600:localhost:8600 <서버>`
-- 분리·Judge·그라운딩·생성 모델은 첫 요청 때 GPU에 올라가서 첫 작업만 1~2분 더 걸립니다. 그다음부터는 컨테이너를 내릴 때까지 올라간 채로 재사용합니다.
+**A-4. 접속과 확인**
+- 서버에서 http://localhost:8600, 원격 서버라면 노트북에서 `ssh -L 8600:localhost:8600 <서버>`를 연 뒤 같은 주소로 접속합니다.
+- `samples/sample.mp4`를 올려 분리가 끝나는지 보고, 비대사 소스에서 "생성으로 바꾸기"를 눌러 봅니다. 무음 영상(`ffmpeg -i samples/sample.mp4 -an -c:v copy silent.mp4`)은 생성만 돕니다.
+- 첫 작업은 모델을 GPU에 올리느라 2~3분 걸리고, 그다음부터는 30초 안팎입니다.
 - 진행 로그: `docker compose logs -f main separation judge generation`
 
-**4. 내리기**
+**A-5. 내리기 (끝나면 꼭)**
 ```bash
 docker compose down       # 컨테이너를 지우고 GPU 메모리를 돌려줌
 nvidia-smi                # 메모리가 비었는지 확인
 ```
-- `up -d`로 띄웠으면 Ctrl+C로는 꺼지지 않습니다. 반드시 `docker compose down`을 실행합니다.
-- 작업 결과(`jobs` 볼륨)와 이미지는 남습니다. 다시 띄우면 이전 작업이 그대로 보입니다.
-- 빌린 GPU라면 내린 뒤 바로 반납합니다.
+- `up -d`로 띄웠으면 Ctrl+C로는 꺼지지 않습니다.
+- 작업 결과(`jobs` 볼륨)와 이미지는 남아서 다시 띄우면 이전 작업이 보입니다.
+
+### B. 노트북 + RunPod
+
+Pod에서는 tools 이미지 하나가 도구 4개(분리·Judge·그라운딩·생성)를 한 프로세스로 띄우고, 노트북에서는 main(화면과 흐름)만 띄웁니다. RunPod Pod 안에서는 Docker Compose를 쓸 수 없어서 이렇게 나눕니다.
+
+**B-1. 가중치용 네트워크 볼륨 만들기 (팀에서 처음 한 번)**
+1. RunPod → Storage → New Network Volume. 크기 60GB 이상(vLLM 플래너 가중치까지면 70GB), GPU를 빌릴 데이터센터와 같은 곳을 고릅니다.
+2. 아무 저렴한 Pod(공식 PyTorch 템플릿 등)를 이 볼륨을 붙여 만들고, 웹 터미널에서 가중치를 받습니다. 볼륨은 `/workspace`에 붙습니다.
+   ```bash
+   pip install 'huggingface_hub[cli]<1.0'
+   huggingface-cli login                       # 0-3의 읽기 토큰
+   git clone https://github.com/capstone-audissey-fall-2026/audyssey.git /tmp/audyssey
+   HF_HOME=/workspace/huggingface bash /tmp/audyssey/scripts/download-weights.sh
+   huggingface-cli logout                      # 볼륨에 토큰을 남기지 않음
+   ```
+3. 받은 뒤 이 Pod는 지웁니다. 볼륨은 남으므로 다음부터는 다시 받지 않습니다.
+
+**B-2. Pod 템플릿 (처음 한 번)**: Templates → New Template([공식 안내](https://docs.runpod.io/pods/templates/manage-templates))
+
+| 항목 | 값 |
+|---|---|
+| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` (공개, 로그인 불필요) |
+| Container start command | 비워 둠 (이미지 기본 명령이 도구 4개를 함께 실행) |
+| Expose HTTP ports | `8700` |
+| 환경변수 | `HF_HOME=/workspace/huggingface`, `HF_HUB_OFFLINE=1`, `CUDA_VISIBLE_DEVICES=0` |
+| 비밀값 | `AUDYSSEY_TOOL_TOKEN`은 공유 템플릿에 직접 쓰지 말고 RunPod Secrets에 만들어 `{{ RUNPOD_SECRET_이름 }}`으로 연결 |
+
+**B-3. 쓸 때마다**
+1. 위 템플릿 + 네트워크 볼륨으로 GPU Pod를 만듭니다. GPU는 48GB 이상(시각 힌트를 켜면 80GB), CUDA 12.8 이상 드라이버.
+2. Pod 로그에 `Uvicorn running on http://0.0.0.0:8700`이 뜨면 준비 끝입니다. 확인: `curl https://<POD-ID>-8700.proxy.runpod.net/health` → `{"tools":["separation","filtering","grounding","generation"],"impl":"real"}`
+3. 노트북에서 레포를 받고(`git clone ...`, `cp .env.example .env`) `.env`에 다음을 넣습니다.
+   ```dotenv
+   AUDYSSEY_TOOL_TOKEN=<Pod와 같은 토큰>
+   AUDYSSEY_SEPARATOR_URL=https://<POD-ID>-8700.proxy.runpod.net
+   AUDYSSEY_FILTER_URL=https://<POD-ID>-8700.proxy.runpod.net
+   AUDYSSEY_GROUNDING_URL=https://<POD-ID>-8700.proxy.runpod.net
+   AUDYSSEY_GENERATOR_URL=https://<POD-ID>-8700.proxy.runpod.net
+   AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+   AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
+   GOOGLE_API_KEY=<키>
+   ```
+4. 노트북에서 main만 띄웁니다(노트북에는 GPU가 필요 없음).
+   ```bash
+   docker compose up -d main
+   # http://localhost:8600
+   ```
+5. 끝나면 노트북에서 `docker compose down`, RunPod에서 **Pod를 Stop/Terminate**합니다. 켜 둔 시간만큼 요금이 나갑니다. 볼륨은 남습니다.
+
+### 자주 막히는 곳
+
+| 증상 | 원인과 해결 |
+|---|---|
+| 가중치 받기에서 401/403 | 0단계 승인 대기 중이거나 조직 미가입. 승인 메일과 `sogang-audyssey` 초대를 확인 |
+| 첫 작업에서 생성·분리 실패, 로그에 `LocalEntryNotFoundError` | 캐시에 가중치가 없음. `HF_CACHE`(또는 RunPod `HF_HOME`) 경로와 A-2/B-1 실행 여부 확인 |
+| `CUDA out of memory` | 다른 사람이 쓰는 GPU에 올렸거나 GPU가 작음. 빈 GPU로 바꾸거나 vLLM 대신 Gemini 사용 |
+| main 로그에 401 | main과 도구 서버의 `AUDYSSEY_TOOL_TOKEN`이 다름 |
+| 업로드가 400 | 영상이 30초를 넘거나 비디오 스트림이 없음 |
+| 작업 폴더 쓰기 권한 오류 | 예전 root 이미지로 만든 볼륨. `docker compose down && docker volume rm audyssey_jobs` 후 다시 띄움 |
+
+### Compose 세부
 
 **접속과 보안**
 - 호스트에는 main의 `127.0.0.1:8600`만 열립니다.
@@ -90,53 +179,17 @@ nvidia-smi                # 메모리가 비었는지 확인
 
 **GPU 지정**
 - 도구별로 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_GENERATION_GPU`, `AUDYSSEY_VLLM_GPU`에 GPU 번호를 넣습니다. 번호가 같으면 그 GPU를 나눠 씁니다.
-- `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이고, vLLM 메모리 비율은 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(생성 포함 6개 컨테이너를 80GB A100 한 장에서 확인).
-- vLLM에 GPU를 따로 주면 이 값을 `0.85` 정도로 올립니다.
+- `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이고, vLLM 메모리 비율은 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(생성 포함 6개 컨테이너를 80GB A100 한 장에서 확인). vLLM에 GPU를 따로 주면 `0.85` 정도로 올립니다.
+- separation·judge·grounding·generation 컨테이너는 같은 `audyssey-tools` 이미지를 실행 명령만 바꿔 씁니다. 이미지에는 가중치가 없습니다.
 
 **가중치와 작업 파일**
 - 가중치 캐시(`HF_CACHE`)는 컨테이너 안 `/hf`에 읽기 전용으로 붙고, 오프라인(`HF_HUB_OFFLINE=1`)으로 읽습니다.
-- 작업 파일은 `jobs` 볼륨에 남습니다.
-- 컨테이너는 일반 사용자(uid 10001)로 실행됩니다. 예전 root 이미지로 만든 볼륨은 쓰기 권한이 없으니 `docker volume rm audyssey_jobs` 후 다시 띄웁니다.
+- 작업 파일은 `jobs` 볼륨에 남습니다. 컨테이너는 일반 사용자(uid 10001)로 실행됩니다.
 
 **그 밖에**
 - 플래너 기본값은 Compose 안의 vLLM(`Qwen/Qwen2.5-VL-3B-Instruct`)입니다.
 - GPU 없이 main만 띄우려면 `AUDYSSEY_PLANNER=stub`과 도구 stub(또는 원격 주소)을 설정하고 `docker compose up main`을 실행합니다.
-- sv3-a100에서는 `HF_CACHE=/home/common/huggingface`를 씁니다. 이 서버의 기본 Docker 빌드 엔진은 설정 문제로 실패하므로 `docker buildx --builder <docker-container 빌더>`로 빌드합니다.
-
-## 노트북 + RunPod
-
-RunPod Pod 안에서는 Docker Compose를 쓸 수 없습니다.
-그래서 Pod에서는 tools 이미지의 기본 명령으로 도구 4개(분리·Judge·그라운딩·생성)를 한 프로세스에 띄우고, 노트북에서는 main만 띄웁니다.
-
-| RunPod 설정 | 값 |
-|---|---|
-| Container image | `ghcr.io/capstone-audissey-fall-2026/audyssey-tools:latest` (공개 이미지) |
-| GPU | 1장, CUDA 12.8 드라이버. 기본 설정(시각 힌트 끔, 도구 4개)에서 실측 약 34GB라 48GB 이상, 시각 힌트를 켜면 80GB 권장 ([현재 상태](status.md) 참고) |
-| Expose HTTP ports | `8700` |
-| Container start command | 비워 둠 (이미지 기본 명령이 분리·Judge·그라운딩·생성을 함께 실행) |
-| Network volume | 가중치를 미리 받아 둔 볼륨을 `/workspace`에 연결. Pod를 반납해도 볼륨은 남으므로 가중치를 다시 받지 않아도 됨 |
-| 환경변수 | `HF_HOME=/workspace/huggingface`, `HF_HUB_OFFLINE=1`, `CUDA_VISIBLE_DEVICES=0`, 모델 ID([가중치 준비](#가중치-준비)). 생성 FT 가중치는 비공개 저장소라 팀 HF 조직 멤버의 토큰으로 볼륨에 미리 받아 둠 |
-| 비밀값 | `AUDYSSEY_TOOL_TOKEN`은 공유 템플릿에 넣지 말고 RunPod secrets로 넣음 |
-
-템플릿은 Templates → New Template에 저장해 두고, Pod를 만들 때 고릅니다([공식 안내](https://docs.runpod.io/pods/templates/manage-templates)).
-노트북 `.env`에는 같은 토큰과 Pod 주소를 넣습니다.
-
-```dotenv
-AUDYSSEY_TOOL_TOKEN=<Pod와 같은 토큰>
-AUDYSSEY_SEPARATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
-AUDYSSEY_FILTER_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
-AUDYSSEY_GROUNDING_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
-AUDYSSEY_GENERATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
-# 플래너는 Gemini 권장
-AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
-GOOGLE_API_KEY=<비공개>
-```
-
-```bash
-docker compose up main
-# http://localhost:8600
-```
+- 직접 빌드할 때는 `docker compose build`. sv3-a100은 기본 빌드 엔진이 설정 문제로 실패하므로 `docker buildx --builder <docker-container 빌더>`를 씁니다.
 
 ## 내 모듈만 GPU로 개발
 
@@ -149,7 +202,7 @@ export LD_LIBRARY_PATH="$PWD/gpu/.venv/lib/python3.12/site-packages/nvidia/npp/l
 export HF_HOME=<가중치 캐시> HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0
 export AUDYSSEY_TOOL_TOKEN=<임의 토큰>
 
-# 내 도구만 real로 띄우기 (--tool은 separation | filtering | grounding, 반복 가능)
+# 내 도구만 real로 띄우기 (--tool은 separation | filtering | grounding | generation, 반복 가능)
 uv run --project gpu --locked audyssey tool-server --tool separation --impl real --host 127.0.0.1 --port 8700
 
 # 다른 터미널: main은 루트 환경에서. 내 도구만 remote, 나머지는 stub
@@ -261,43 +314,11 @@ LANGSMITH_PROJECT=audyssey
 - 쓸 모델은 환경변수(`.env` 또는 RunPod 템플릿)의 모델 ID로 정합니다.
 - 서버는 실행 중에 아무것도 내려받지 않고 `HF_HOME` 캐시만 오프라인으로 읽습니다. 그래서 캐시를 미리 받아 둬야 합니다.
 
-**공식 모델을 씁니다.** 순서는 다음과 같습니다.
+받는 방법은 [A-2](#a-내-gpu-서버에서-docker-compose)(서버)와 [B-1](#b-노트북--runpod)(RunPod 볼륨)에 있고, 받을 목록은 [`scripts/download-weights.sh`](../scripts/download-weights.sh) 하나에 모아 두었습니다. 승인·조직 가입 조건은 [0. 공통 준비](#0-공통-준비-사람마다-처음-한-번)를 봅니다.
 
-1. Hugging Face에서 아래 공식 모델 페이지마다 접근 승인(SAM License)을 요청합니다. 승인에 시간이 걸릴 수 있습니다.
-2. Hugging Face 설정 → Access Tokens에서 읽기 토큰을 만듭니다. 토큰은 커밋하거나 공유하지 않습니다.
-3. 그 토큰으로 로그인해 캐시에 받습니다. 토큰은 이때만 쓰고, 서버 설정에는 넣지 않습니다.
-
-```bash
-uvx --from 'huggingface_hub[cli]<1.0' huggingface-cli login
-export HF_HOME=<가중치 캐시>   # RunPod: /workspace/huggingface (네트워크 볼륨)
-H="uvx --from huggingface_hub[cli]<1.0 huggingface-cli download"
-$H facebook/sam-audio-large-tv
-$H t5-base                                                   # SAM Audio 텍스트 인코더
-$H facebook/sam-audio-judge --revision sam_audio
-$H facebook/sam-audio-judge --include "*.json"               # Judge 토크나이저는 main에서 읽음
-$H facebook/sam3.1 config.json sam3.1_multiplex.pt
-# 분리 후보를 2개 이상 쓸 때만 (AUDYSSEY_SAM_AUDIO_RERANKING_CANDIDATES>1)
-$H lukewys/laion_clap 630k-best.pt
-$H roberta-base; $H bert-base-uncased; $H facebook/bart-base
-# Compose 안의 vLLM 플래너를 쓸 때만
-$H Qwen/Qwen2.5-VL-3B-Instruct
-```
-
-**생성 가중치** (서버 실행 전 운영자가 받음): 공개 베이스는 승인 없이 받을 수 있습니다. 비공개 FT 저장소는 `sogang-audyssey` 조직 멤버에게만 열리며, 팀원 각자 위 로그인 단계에서 자신의 읽기 토큰을 사용합니다. 토큰과 FT 가중치는 레포·공개 이미지에 넣지 않습니다.
-
-```bash
-export HF_HOME=/home/common/huggingface
-H="uvx --from huggingface_hub[cli]<1.0 huggingface-cli download"
-$H jnwnlee/SelVA weights/video_enc_sup_5.pth ext_weights/v1-44.pth ext_weights/synchformer_state_dict.pth
-$H sogang-audyssey/selva-ft-selsync generator/S_O_s43/model_ema_step1000.pth encoder/S_O/best.pt
-$H apple/DFN5B-CLIP-ViT-H-14-384
-$H google/flan-t5-base
-$H nvidia/bigvgan_v2_44khz_128band_512x
-$H lukewys/laion_clap 630k-best.pt
-$H roberta-base
-```
-
-공식 생성기 `weights/generator_large_44khz_sup_5.pth`는 사용하지 않습니다. FT 생성기(EMA)와 SelSync 인코더만 덮어씁니다. SelVA 코드는 라이선스 표시가 없어 복사하지 않고 고정 커밋 의존성으로 설치하며, 가중치 라이선스는 CC-BY-NC-SA-4.0입니다.
+- 공식 생성기 `weights/generator_large_44khz_sup_5.pth`는 쓰지 않습니다. FT 생성기(EMA)와 SelSync 인코더만 덮어씁니다.
+- SelVA 코드는 라이선스 표시가 없어 레포에 복사하지 않고 고정 커밋 의존성으로 설치합니다. 가중치 라이선스는 CC-BY-NC-SA-4.0입니다.
+- 토큰과 FT 가중치는 레포·공개 이미지에 넣지 않습니다.
 
 | 모델 | 설정 | 캐시에 필요한 것 |
 |---|---|---|
