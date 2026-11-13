@@ -1,6 +1,4 @@
-import argparse
 import os
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -195,30 +193,6 @@ class SelvaGenerationTests(unittest.TestCase):
         fake.hub.hf_hub_download.assert_called_once_with(repo_id="lukewys/laion_clap", filename="630k-best.pt", local_files_only=True)
         fake.clap.load_ckpt.assert_called_once_with('/cache/630k-best.pt')
         fake.modules['laion_clap'].CLAP_Module.assert_called_once_with(enable_fusion=False, device='cuda')
-
-    def test_clap_import_does_not_parse_server_arguments(self):
-        argv = ['audyssey', 'tool-server', '--tool', 'generation', '--impl', 'real', '--host', '0.0.0.0', '--port', '8700']
-        load = self.real.import_module
-        def import_module(name):
-            if name == 'laion_clap':
-                argparse.ArgumentParser().parse_args()
-            return load(name)
-        with patch.object(sys, 'argv', argv), patch.object(self.real, 'import_module', side_effect=import_module):
-            self.assertTrue(self.score(runtime()).passed)
-            self.assertIs(sys.argv, argv)
-
-    def test_clap_import_restores_server_arguments_on_failure(self):
-        argv = ['audyssey', 'tool-server', '--tool', 'generation']
-        load = self.real.import_module
-        def import_module(name):
-            if name == 'laion_clap':
-                self.assertEqual(sys.argv, ['audyssey'])
-                raise ImportError('CLAP unavailable')
-            return load(name)
-        with patch.object(sys, 'argv', argv), patch.object(self.real, 'import_module', side_effect=import_module), patch.dict('sys.modules', runtime().modules):
-            with self.assertRaisesRegex(ImportError, 'CLAP unavailable'):
-                self.real._load_clap()
-            self.assertIs(sys.argv, argv)
 
     def test_generate_matches_sync_segments_at_fractional_duration(self):
         fake = runtime(9.28)

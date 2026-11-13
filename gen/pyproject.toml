@@ -12,7 +12,9 @@ dependencies = [
     "open-clip-torch==3.3.0",
     "av==17.0.1",
     "huggingface-hub",
-    "laion-clap",
+    # MMAudio/av-benchmark CLAP fork used by the SelSync evaluation: loads 630k-best.pt
+    # with transformers>=4.31 (drops position_ids) and numpy 2.
+    "laion-clap @ git+https://github.com/hkchengrex/CLAP@590b52df03a5e480634b8714135d3534313be860",
     "selva @ git+https://github.com/jnwnlee/selva@d7d40a992aab58e7cf246055681a657e5d8b4a4d",
 ]
 
