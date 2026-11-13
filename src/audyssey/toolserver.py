@@ -149,9 +149,7 @@ def create_tool_app(
                 track_path = save_upload(track, root / "track.wav", limit)
                 with _model_lock:
                     return generation.score_generation(
-                        track_path,
-                        source_plan,
-                        sibling_plans,
+                        track_path, source_plan, sibling_plans
                     )
 
     return app

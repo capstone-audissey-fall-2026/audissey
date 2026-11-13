@@ -197,18 +197,12 @@ def _load_clap():
     return torch, clap
 
 
-def _cosines(audio: np.ndarray, candidates: np.ndarray) -> np.ndarray:
-    norms = np.linalg.norm(audio) * np.linalg.norm(candidates, axis=1)
-    return np.divide(
-        candidates @ audio, norms, out=np.zeros_like(norms), where=norms > 0
-    )
-
-
 def score_generation(
     track: Path,
     plan: SourcePlan,
     siblings: list[SourcePlan],
 ) -> FilterResult:
+    threshold = Settings().generation_margin_threshold
     with _model_lock:
         torch, clap = _load_clap()
         with torch.inference_mode():
@@ -218,21 +212,21 @@ def score_generation(
             texts = clap.get_text_embedding(
                 [plan.description, *[s.description for s in siblings]]
             )
-            similarities = _cosines(audio, texts)
+            norms = np.linalg.norm(audio) * np.linalg.norm(texts, axis=1)
+            similarities = np.divide(
+                texts @ audio, norms, out=np.zeros_like(norms), where=norms > 0
+            )
             scores = {"text_correct": float(np.argmax(similarities) == 0)}
             passed, reason = True, ""
             if siblings:
                 best = int(np.argmax(similarities[1:]))
                 margin = float(similarities[0] - similarities[best + 1])
                 scores["text_margin"] = margin
-                passed = (
-                    scores["text_correct"] == 1
-                    and margin >= Settings().generation_margin_threshold
-                )
+                passed = scores["text_correct"] == 1 and margin >= threshold
                 if not passed:
                     reason = (
                         f"closer to sibling: {siblings[best].name}"
                         if scores["text_correct"] == 0
-                        else f"text margin {margin:.3f} below threshold {Settings().generation_margin_threshold}"
+                        else f"text margin {margin:.3f} below threshold {threshold}"
                     )
     return FilterResult(passed=passed, scores=scores, reason=reason)

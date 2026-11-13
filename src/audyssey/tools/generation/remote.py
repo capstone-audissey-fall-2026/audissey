@@ -27,11 +27,10 @@ def score_generation(
     siblings: list[SourcePlan],
 ) -> FilterResult:
     settings = Settings()
-    files = {"track": ("track.wav", track.read_bytes(), "audio/wav")}
     response = post(
         settings.generator_url,
         "/score",
-        files,
+        {"track": ("track.wav", track.read_bytes(), "audio/wav")},
         {
             "plan": plan.model_dump_json(),
             "siblings": json.dumps([p.model_dump() for p in siblings]),
