@@ -137,9 +137,8 @@ class SelvaGenerationTests(unittest.TestCase):
 
         def embed(x):
             seen.append(x.copy())
-            # Emulate a crop-dependent model if the scorer sends more than 10 s.
-            second = len(seen) % 2 == 0 if x.shape[1] > 480000 else x[0, 0] > .1
-            return np.array([[0., 4.]]) if second else np.array([[3., 0.]])
+            # One normalized embedding per 10 s window, as CLAP returns.
+            return np.array([[1., 0.], [0., 1.]])[: len(x)]
 
         fake.clap.get_audio_embedding_from_data.side_effect = embed
         with patch.dict('sys.modules', fake.modules):
@@ -148,10 +147,9 @@ class SelvaGenerationTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(first.passed)
         self.assertAlmostEqual(first.scores['text_margin'], .4 / 2 ** .5)
-        self.assertEqual(len(seen), 4)
-        for offset in (0, 2):
-            np.testing.assert_array_equal(seen[offset], mono[None, :480000])
-            np.testing.assert_array_equal(seen[offset + 1], mono[None, 240000:720000])
+        self.assertEqual(len(seen), 2)
+        for batch in seen:
+            np.testing.assert_array_equal(batch, np.stack([mono[:480000], mono[240000:720000]]))
 
     def test_score_short_tracks_use_one_window(self):
         fake = runtime()
@@ -175,10 +173,14 @@ class SelvaGenerationTests(unittest.TestCase):
         self.assertIn('threshold', result.reason)
 
     def test_score_without_siblings_passes(self):
+        fake = runtime()
         with patch.dict(os.environ, {'AUDYSSEY_GENERATION_MARGIN_THRESHOLD': '100'}):
-            result = self.score(runtime(), siblings=[])
+            result = self.score(fake, siblings=[])
         self.assertTrue(result.passed)
         self.assertEqual(result.scores, {'text_correct': 1})
+        # CLAP's tokenizer squeezes a single text into the wrong shape; never call it.
+        fake.clap.get_text_embedding.assert_not_called()
+        fake.clap.get_audio_embedding_from_data.assert_not_called()
 
     def test_loading_requires_offline_mode_before_importing_models(self):
         with patch.dict(os.environ, {"HF_HUB_OFFLINE": "0"}), self.assertRaisesRegex(RuntimeError, "HF_HUB_OFFLINE=1"):

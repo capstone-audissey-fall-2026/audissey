@@ -209,44 +209,43 @@ def score_generation(
     plan: SourcePlan,
     siblings: list[SourcePlan],
 ) -> FilterResult:
+    # Nothing to tell apart; also avoids CLAP's tokenizer, which breaks on one text.
+    if not siblings:
+        return FilterResult(passed=True, scores={"text_correct": 1})
     threshold = Settings().generation_margin_threshold
+    mono = read_wav(track).mean(axis=1)
+    # CLAP randomly crops inputs over 10 s; embed fixed 10 s windows and average.
+    spans = windows(len(mono) / 48000, 10, 10)
+    clips = np.stack(
+        [mono]
+        if len(spans) == 1
+        else [
+            mono[min(round(start * 48000), len(mono) - 480000) :][:480000]
+            for start, _ in spans
+        ]
+    )
     with _model_lock:
         torch, clap = _load_clap()
         with torch.inference_mode():
-            mono = read_wav(track).mean(axis=1)
-            embeddings = np.stack(
-                [
-                    clap.get_audio_embedding_from_data(
-                        x=mono[None, round(start * 48000) : round(end * 48000)]
-                    )[0]
-                    for start, end in windows(len(mono) / 48000, 10, 10)
-                ]
-            )
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            audio = np.divide(
-                embeddings, norms, out=np.zeros_like(embeddings), where=norms > 0
-            ).mean(axis=0)
-            norm = np.linalg.norm(audio)
-            if norm > 0:
-                audio /= norm
+            # CLAP returns L2-normalized embeddings.
+            audio = clap.get_audio_embedding_from_data(x=clips).mean(axis=0)
             texts = clap.get_text_embedding(
                 [plan.description, *[s.description for s in siblings]]
             )
-            norms = np.linalg.norm(audio) * np.linalg.norm(texts, axis=1)
-            similarities = np.divide(
-                texts @ audio, norms, out=np.zeros_like(norms), where=norms > 0
-            )
-            scores = {"text_correct": float(np.argmax(similarities) == 0)}
-            passed, reason = True, ""
-            if siblings:
-                best = int(np.argmax(similarities[1:]))
-                margin = float(similarities[0] - similarities[best + 1])
-                scores["text_margin"] = margin
-                passed = scores["text_correct"] == 1 and margin >= threshold
-                if not passed:
-                    reason = (
-                        f"closer to sibling: {siblings[best].name}"
-                        if scores["text_correct"] == 0
-                        else f"text margin {margin:.3f} below threshold {threshold}"
-                    )
-    return FilterResult(passed=passed, scores=scores, reason=reason)
+    similarities = texts @ (audio / np.linalg.norm(audio))
+    best = int(np.argmax(similarities[1:]))
+    margin = float(similarities[0] - similarities[best + 1])
+    correct = float(margin > 0)
+    passed = correct == 1 and margin >= threshold
+    reason = ""
+    if not passed:
+        reason = (
+            f"closer to sibling: {siblings[best].name}"
+            if not correct
+            else f"text margin {margin:.3f} below threshold {threshold}"
+        )
+    return FilterResult(
+        passed=passed,
+        scores={"text_correct": correct, "text_margin": margin},
+        reason=reason,
+    )
