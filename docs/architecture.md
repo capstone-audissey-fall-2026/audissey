@@ -73,7 +73,7 @@ flowchart TB
 같은 분리 소스의 대체 생성 소스가 있으면 재사용합니다. 생성 소스 대상이면 그 자리에서 설명을 바꾸고 다시 생성합니다.
 `attempts`는 누적되며 seed는 `AUDYSSEY_SELVA_SEED + attempts - 1`입니다. 루프마다 최대 `1 + MAX_GENERATION_RETRIES`번 시도하고, 합격 시 멈추며 최고 `text_margin` 결과만 남깁니다(없으면 0, 동점이면 최신).
 단계 키는 `generate:<id>`, `score:<id>`이고, 각 시도의 점수는 score 메시지와 LangSmith에 남깁니다. 채점은 기존 `FilterResult`를 씁니다.
-형제 계획은 대사·자기 자신·자기가 대체하는 원본을 제외하고, 대체 생성에는 원래 분리 stem을 참조로 전달합니다.
+형제 계획은 대사·자기 자신·자기가 대체하는 원본을 제외하고, 대체 생성에는 원래 분리 stem과 같은 job의 분리 stem 전체를 참조 비교용으로 전달합니다(keep과 무관, 생성 stem 제외). 참조 점수는 기록만 하고 합격 판정에는 쓰지 않습니다.
 생성 뒤에는 residual을 다시 계산하지 않습니다. 원래 분리 stem을 다시 켜면 두 stem 모두 합쳐집니다.
 원본 코덱 패딩과 생성 길이가 다르면 믹스에 더할 때만 겹치는 길이를 사용하며, 내보내는 stem 길이는 유지합니다.
 
@@ -87,7 +87,7 @@ judge(mono_path, track_path, plan: SourcePlan) -> FilterResult
 locate(video: Path, hint: VisualHint) -> GroundResult
 mask_video(video: Path, hint: VisualHint, out: Path) -> Path
 generate(video: Path, plan: SourcePlan, out: Path, seed: int) -> Path
-score_generation(track: Path, plan: SourcePlan, siblings: list[SourcePlan], reference_stem: Path | None) -> FilterResult
+score_generation(track: Path, plan: SourcePlan, siblings: list[SourcePlan], reference_stem: Path | None, reference_stems: list[Path] | None = None) -> FilterResult
 render(job: Job, job_dir, include_residual_stem: bool) -> RenderOutput
 ```
 
@@ -122,10 +122,10 @@ POST /judge     multipart mono, track, plan                  → FilterResult
 POST /locate    multipart video, hint                        → GroundResult
 POST /mask      multipart video, hint                        → MP4
 POST /generate  multipart video, plan, seed                   → WAV
-POST /score     multipart track, plan, siblings (+ reference) → FilterResult
+POST /score     multipart track, plan, siblings (+ reference, references[]) → FilterResult
 ```
 
-생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON, `reference`는 선택 WAV 파일입니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 PR 2에서 연결합니다.
+생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON, `reference`는 선택 WAV 파일이고 `references`는 비교할 분리 WAV의 반복 multipart 필드입니다. 각 파일에 같은 업로드 제한을 적용하며 업로드 이름은 저장 경로로 사용하지 않습니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 SelVA FT·SelSync와 CLAP 채점으로 구현하며 별도 `gen/` 환경에서 실행합니다.
 
 ## 코드 위치
 
@@ -145,7 +145,7 @@ src/audyssey/
     separation/  stub.py real.py remote.py   separate (SAM Audio)
     filtering/   stub.py real.py remote.py   judge (SAM Audio Judge)
     grounding/   stub.py real.py remote.py   locate, mask_video (SAM3)
-    generation/  stub.py remote.py           generate, score_generation (real은 PR 2)
+    generation/  stub.py real.py remote.py   generate, score_generation
     editing/     render.py                   residual, pitch, render
 gpu/             GPU 도구 전용 uv 프로젝트 (Python 3.12, numpy 1.26, torch cu128)
 docker/          app.Dockerfile, tools.Dockerfile

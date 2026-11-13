@@ -49,7 +49,7 @@
 | 3. push | 없음. push만으로는 CI가 돌지 않음 | `git push -u origin <브랜치>` |
 | 4. PR (대상 `main`) | `ci-lint`가 job 2개를 실행. `lint-and-format-check`(필수): ruff lint·format, ty, unittest. `numpy-1x`: Python 3.12 + numpy 1.26 unittest | 설명에 요약과 확인 방법을 적음. `contracts.py`를 바꿨다면 팀 합의를 받음. 실패하면 고쳐서 다시 push |
 | 5. merge | `main` 보호 규칙 적용: 필수 검사 통과 전 머지 불가(관리자 포함), 강제 push와 브랜치 삭제 금지 | 필수 승인 수는 0이지만 리뷰를 받고 머지. 머지 커밋 방식을 쓰고, 머지한 브랜치는 직접 지움 |
-| 6. 배포 | `main`에 반영되면 `publish-images`가 `audyssey-app`, `audyssey-tools`를 빌드해 GHCR에 `latest`와 커밋 SHA 태그로 올림 (수동 실행 가능, PR에서는 올리지 않음) | GPU 서버: `docker compose pull && docker compose up -d`. RunPod: Pod를 다시 만들어 새 이미지를 받거나 SHA 태그로 고정 |
+| 6. 배포 | `main`에 반영되면 `publish-images`가 `audyssey-app`, `audyssey-tools`, `audyssey-generation`을 빌드해 GHCR에 `latest`와 커밋 SHA 태그로 올림 (수동 실행 가능, PR에서는 올리지 않음) | GPU 서버: `docker compose pull && docker compose up -d`. RunPod: Pod를 다시 만들어 새 이미지를 받거나 SHA 태그로 고정 |
 
 이미지는 공개되어 있어 로그인 없이 받을 수 있습니다. tools 이미지는 약 23GB라 빌드와 다운로드에 시간이 걸립니다.
 
