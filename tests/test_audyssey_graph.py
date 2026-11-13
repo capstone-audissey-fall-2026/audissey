@@ -383,7 +383,7 @@ class GraphTests(unittest.TestCase):
         self.assertTrue(source.filter.passed)
         np.testing.assert_allclose(read_wav(self.directory / source.track_path), 0.43)
 
-    def test_generation_siblings_and_reference(self):
+    def test_generation_siblings_exclude_replaced_source(self):
         from audyssey.contracts import FilterResult
         source, _, score = self.generation_setup([FilterResult(passed=True)])
         original = Source(id="s2", plan=SourcePlan(name="original", kind="sfx", description="rain"), track_path="original.wav")
@@ -393,7 +393,8 @@ class GraphTests(unittest.TestCase):
         self.job.sources += [original, other, dialogue]
         graph.process_source(self.job, source, self.ctx)
         self.assertEqual(score.call_args.args[2], [other.plan])
-        self.assertEqual(score.call_args.args[3], self.directory / "original.wav")
+        self.assertEqual(len(score.call_args.args), 3)
+        self.assertEqual(source.replaces, original.id)
 
     def test_generation_error_isolated_and_attempt_files_removed(self):
         from unittest.mock import Mock

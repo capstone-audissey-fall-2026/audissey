@@ -100,14 +100,14 @@ class ToolsTests(unittest.TestCase):
             sibling = plan.model_copy(update={"name": "other", "description": "rain"})
             for seed, passed in [(settings.selva_seed, False), (settings.selva_seed + 1, True)]:
                 out = tools.generate(video, plan, root / "track.wav", seed)
-                result = tools.score_generation(out, plan, [sibling], None)
+                result = tools.score_generation(out, plan, [sibling])
                 self.assertEqual(result.passed, passed)
                 self.assertEqual(result.scores["text_correct"], float(passed))
                 self.assertGreater(result.scores["text_margin"], 0)
                 self.assertEqual(result.reason, "" if passed else "stub: first seed")
-                self.assertNotIn("text_margin", tools.score_generation(out, plan, [], None).scores)
+                self.assertNotIn("text_margin", tools.score_generation(out, plan, []).scores)
             other = tools.generate(video, sibling, root / "other.wav", settings.selva_seed)
-            self.assertTrue(tools.score_generation(other, sibling, [plan], None).passed)
+            self.assertTrue(tools.score_generation(other, sibling, [plan]).passed)
 
     def test_remote_generator_requires_url(self):
         from audyssey.tools import load_tools

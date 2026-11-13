@@ -57,15 +57,17 @@ flowchart LR
     T2["필터링<br/>SAM Audio Judge"]
     T3["그라운딩<br/>SAM3.1"]
   end
+  MAIN -- "HTTP + Bearer 토큰 :8700" --> GEN["생성 · audyssey-generation · GPU<br/>SelVA FT + SelSync · CLAP"]
+  GEN -. "읽기 전용 · 오프라인" .-> HF
   TOOLS -. "읽기 전용 · 오프라인" .-> HF[("HF 캐시<br/>가중치")]
   MAIN -. "LANGSMITH_*" .-> LS["LangSmith"]
 ```
 
 - **단계 순서는 코드에 고정**되어 있습니다(LangGraph). 업로드하면 타임라인까지 자동으로 진행하고, 그다음 편집은 사용자가 명령을 보내서 합니다.
 - **플래닝과 분리 뒤에 검증**이 있고, 실패하면 정해진 횟수만큼 다시 합니다.
-- **main 서버는 GPU를 쓰지 않습니다.** 모델은 도구 서버(SAM Audio, Judge, SAM3)와 플래너 LLM(Gemini 또는 vLLM)을 API로 부릅니다.
+- **main 서버는 GPU를 쓰지 않습니다.** 모델은 도구 서버(SAM Audio, Judge, SAM3, SelVA·SelSync)와 플래너 LLM(Gemini 또는 vLLM)을 API로 부릅니다.
 - **도구마다 `stub`(가짜), `real`(직접 실행), `remote`(다른 서버 호출)를 고를 수 있습니다.** 그래서 내 모듈만 실제 모델로 돌리고 나머지는 stub으로 둘 수 있습니다.
-- **생성은 현재 stub/remote로 흐름을 검증합니다.** real SelVA·SelSync와 생성 GPU 환경·배포는 PR 2에서 연결합니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
+- **생성 real은 SelVA FT·SelSync + CLAP 채점입니다.** 전용 `gen/` 환경과 `audyssey-generation` 이미지로 분리합니다. Docker 빌드와 GPU 실측·E2E는 운영자 확인 전입니다. 대사는 생성하지 않고, 생성 stem은 residual 계산에 넣지 않습니다.
 - **시각 힌트는 기본으로 꺼져 있습니다.** 분리는 텍스트 설명과 구간으로 합니다.
 
 용어, 검증 규칙, 함수 시그니처, API, 코드 위치는 [docs/architecture.md](docs/architecture.md)에 있습니다.
@@ -75,14 +77,14 @@ flowchart LR
 **기능 수정과 실험은 stub으로 하고, A100 80GB급 GPU는 실제 모델 통합 테스트 때만 빌립니다.**
 - stub은 GPU 없이 노트북에서 흐름 전체(업로드 → 플래닝 → 분리 → 검증 → 편집 → 합치기)를 1초 안에 돌립니다. 그래프, API, UI, 편집처럼 모델 품질과 상관없는 수정은 stub과 단위 테스트로 끝냅니다.
 - 내 모듈만 실제 모델로 바꿔 볼 때도 나머지는 stub으로 둡니다. 플래너는 Gemini API로 GPU 없이 실제 호출할 수 있습니다.
-- 모델 5개를 한꺼번에 올리는 전체 테스트는 GPU 메모리를 약 50~70GB 씁니다([실측](docs/status.md)). 이때만 GPU를 빌리고, 끝나면 바로 내리고 반납합니다.
+- Compose는 6개 컨테이너(main, separation, judge, grounding, generation, vllm)입니다. 생성 포함 한 장 최대 메모리는 56.6GB였습니다(후보 4개, [실측](docs/status.md)). 전체 GPU 테스트 때만 GPU를 빌리고, 끝나면 바로 내리고 반납합니다.
 
 | 상황 | 필요한 것 | 안내 |
 |---|---|---|
 | GPU 없이 흐름만 확인 | Python 3.11+, uv, ffmpeg | 위 "바로 해 보기" |
-| GPU 서버 한 대에서 전부 실행 | Docker, NVIDIA Container Toolkit, 가중치 캐시 | [Docker Compose](docs/running.md#gpu-서버-한-대-docker-compose) |
+| GPU 서버 한 대에서 전부 실행 | Docker, NVIDIA Container Toolkit, 가중치 캐시 (6개 구성 GPU 검증 전) | [Docker Compose](docs/running.md#gpu-서버-한-대-docker-compose) |
 | 노트북 + RunPod GPU | 노트북 Docker, RunPod Pod 1개 (48GB 이상) | [RunPod](docs/running.md#노트북--runpod) |
-| 내 모듈만 GPU로 개발 | GPU, `gpu/` 환경 | [모듈 개발](docs/running.md#내-모듈만-gpu로-개발) |
+| 내 모듈만 GPU로 개발 | GPU, `gpu/` 또는 생성용 `gen/` 환경 | [모듈 개발](docs/running.md#내-모듈만-gpu로-개발) |
 | 플래너를 Gemini나 vLLM으로 | API 키 또는 vLLM 주소 | [플래너 연결](docs/running.md#플래너-연결-gemini-vllm) |
 | 실행 기록 보기 | LangSmith 키 | [LangSmith](docs/running.md#langsmith) |
 | 모델 가중치 받기 | Hugging Face 승인과 토큰 | [가중치 준비](docs/running.md#가중치-준비) |
@@ -110,6 +112,7 @@ flowchart LR
 | 분리 | `tools/separation/real.py` | 분리 담당 | 재시도할 때 조건·후보 수를 바꾸는 전략 |
 | 필터링 | `tools/filtering/real.py` | 필터링 담당 | 합격 기준 보정, 실패 이유와 `suggestion` 생성 |
 | 그라운딩 | `tools/grounding/real.py` | 미정 | 위치 확인 강화, 추적 실패 대비 |
+| 생성·채점 | `tools/generation/real.py` | 미정 | SelVA FT·SelSync 생성, CLAP TargetSel 보정, GPU 실측 |
 | 편집·합치기 | `tools/editing/render.py` | 미정 | 편집 품질, 편집 명령 추가 |
 | 인프라·배포 | `docker/`, `compose.yaml`, `.github/workflows/` | 인프라 담당 | RunPod 템플릿 검증, 캐시 준비 안내 |
 

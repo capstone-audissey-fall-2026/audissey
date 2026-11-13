@@ -27,7 +27,6 @@ def score_generation(
     track: Path,
     plan: SourcePlan,
     siblings: list[SourcePlan],
-    reference_stem: Path | None,
 ) -> FilterResult:
     peak = float(np.max(np.abs(read_wav(track)), initial=0))
     passed = peak >= 0.15

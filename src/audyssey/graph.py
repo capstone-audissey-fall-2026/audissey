@@ -102,7 +102,6 @@ def generate_source(job: Job, source: Source, ctx: Context) -> None:
     attempts: list[Path] = []
     messages: list[str] = []
     key = f"generate:{source.id}"
-    reference = job.find_source(source.replaces) if source.replaces else None
     try:
         for round_number in range(1, maximum + 1):
             source.attempts += 1
@@ -145,9 +144,6 @@ def generate_source(job: Job, source: Source, ctx: Context) -> None:
                 path,
                 source.plan,
                 siblings(job, source),
-                directory / reference.track_path
-                if reference and reference.track_path
-                else None,
             )
             messages.append(
                 f"attempt {source.attempts}: correct={result.scores.get('text_correct')} "

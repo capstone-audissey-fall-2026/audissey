@@ -51,7 +51,7 @@
 **비목표**
 - 대사(dialogue) 생성. TTS도 넣지 않는다. 대사는 분리로만 다룬다.
 - 유음 영상에서 생성을 자동으로 돌리는 것. 생성은 사용자가 요청할 때만 한다.
-- 10초를 넘는 영상의 생성 품질 보장. 돌아가기만 하면 된다.
+- 15초를 넘는 영상의 생성 품질 보장. 돌아가기만 하면 된다.
 - RunPod 구성 갱신. RunPod 검증은 별도로 미뤄져 있다(§9).
 - 최종 UI 디자인. 개발용 화면(`devui/`)에 필요한 최소 조작만 넣는다.
 - 분리 쪽 동작 변경. 플래너 구간을 SAM Audio에 넘기는 문제는 따로 다룬다(§11).
@@ -136,7 +136,7 @@
 반복:
   시도 += 1
   track = generate(video, plan, out, seed=시도에서 정한 값)
-  result = score_generation(track, plan, 형제 계획들, 참조 stem)
+  result = score_generation(track, plan, 형제 계획들)
   기록: 시도별 결과
   result.passed 이거나 시도 >= 최대 시도면 멈춤
 최종 track = margin이 가장 높은 시도의 결과
@@ -149,7 +149,6 @@
 - 시도별 점수는 계약에 새 필드를 만들지 않는다 (제안). 가장 좋은 시도의 결과만 `source.filter`에 넣고, 각 시도의 점수는 `score:<id>` 단계 메시지와 LangSmith 기록에 남긴다.
 - 단계 키는 `generate:<id>`, `score:<id>`다. 분리 쪽의 `separate:<id>`, `judge:<id>`와 같은 형식이다.
 - 형제 계획은 같은 job에서 대사가 아니고, 자기 자신과 자기가 대체하는 소스를 뺀 소스들의 계획이다.
-- 참조 stem은 대체 생성일 때 원래 분리 stem 경로다. 그 밖에는 없다.
 
 **residual**
 - `refresh_residual`은 `origin == "separated"`이고 `track_path`가 있는 소스만 원본에서 뺀다.
@@ -166,8 +165,8 @@
 generate: Callable[[Path, SourcePlan, Path, int], Path]
 # (video, plan, out_wav, seed) -> out_wav. 48kHz 모노, 영상 길이와 같은 샘플 수.
 
-score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], FilterResult]
-# (track, plan, siblings, reference_stem) -> FilterResult
+score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]
+# (track, plan, siblings) -> FilterResult
 ```
 
 - 설정 `AUDYSSEY_GENERATOR: stub | real | remote` (기본 `stub`)와 `AUDYSSEY_GENERATOR_URL`을 추가한다. 두 함수는 같은 모듈(`tools/generation/{stub,real,remote}.py`)에 둔다.
@@ -187,20 +186,17 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], Fi
 - 모델은 첫 요청 때 한 번 올리고 프로세스가 끝날 때까지 재사용한다(다른 도구와 같은 `@cache` 방식).
 
 **길이 처리**
-- 영상이 `AUDYSSEY_SELVA_SINGLE_MAX_S`(기본 10초) 이하면 영상 전체 길이로 한 번 생성한다.
-- 더 길면 길이 `AUDYSSEY_SELVA_WINDOW_S`(기본 8초) 창을 겹침 1초로 이어 영상 전체를 덮고, 겹친 구간은 선형 크로스페이드로 잇는다 (제안).
-- 구현 첫 단계에서 8초와 10초 단일 생성 품질을 비교해, 10초 기본값이 괜찮은지 기록한다(§10).
+- 영상이 `AUDYSSEY_SELVA_SINGLE_MAX_S`(기본 15초) 이하면 영상 전체 길이로 한 번 생성한다.
+- 더 길면 길이 `AUDYSSEY_SELVA_WINDOW_S`(기본 8초) 창을 겹침 1초로 이어 영상 전체를 덮는다. 마지막 창은 영상 끝에 맞추므로 겹침이 더 길 수 있으며, 겹친 전체 구간은 선형 크로스페이드로 잇는다 (제안).
+- 구현 첫 단계에서 8초와 15초 단일 생성 품질을 비교해, 15초 기본값이 괜찮은지 기록한다(§10).
 
-**채점 (텍스트 TargetSel)**
-- LAION-CLAP으로 생성 stem의 오디오 임베딩과, 자기 설명 및 형제 설명들의 텍스트 임베딩 사이 코사인 유사도를 구한다.
+**채점 (텍스트 TargetSel만 사용)**
+- LAION-CLAP으로 48kHz 모노 stem 전체를 고정 10초 창(1초 겹침, 마지막 창은 끝에 정렬, 10초 이하는 한 창으로 CLAP 기본 패딩)으로 임베딩하고, 각 L2 정규화 임베딩의 평균을 다시 L2 정규화해 자기 설명 및 형제 설명들의 텍스트 임베딩과 코사인 유사도를 구한다.
 - 점수(`FilterResult.scores`):
   - `text_correct`: 자기 설명이 가장 가까우면 1, 아니면 0
   - `text_margin`: 자기 설명과의 유사도 − 형제 설명 가운데 가장 높은 유사도
   - 형제가 없으면 margin은 기록하지 않고 `text_correct=1`로 둔다 (제안).
 - 합격: `text_correct == 1`이고 `text_margin >= AUDYSSEY_GENERATION_MARGIN_THRESHOLD`(기본 0.0, 아직 보정 전).
-- 참조 stem이 있으면(대체 생성) **분리 stem 기준 TargetSel**도 기록만 한다. 합격 판정에는 쓰지 않는다.
-  - 생성 stem과 각 분리 stem의 CLAP 오디오 임베딩 유사도를 구하고, 자기가 대체하는 분리 stem이 가장 가까운지(`ref_correct`)와 margin(`ref_margin`)을 남긴다.
-  - 비교 대상은 같은 job의 분리 stem 전체다. 오케스트레이터가 `reference_stem`만 넘기므로, 형제 분리 stem 목록이 필요하면 계약에 인자를 추가해도 된다(빌더 판단).
 - CLAP 체크포인트는 분리 쪽 후보 고르기와 같은 `lukewys/laion_clap`의 `630k-best.pt`다(이미 공용 캐시에 있음).
 - 불합격 이유(`reason`)는 "closer to sibling: <형제 이름>"처럼 짧게 남긴다.
 
@@ -214,7 +210,7 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], Fi
 - `toolserver.py`에 `--tool generation`을 추가한다.
 - 엔드포인트:
   - `POST /generate`: 영상 파일, 계획(JSON), seed를 받아 WAV를 돌려준다.
-  - `POST /score`: 생성 stem, 계획, 형제 계획(JSON), 참조 stem(선택)을 받아 `FilterResult`를 돌려준다.
+  - `POST /score`: 생성 stem, 계획, 형제 계획(JSON)을 받아 `FilterResult`를 돌려준다.
 - 인증(Bearer 토큰), 업로드 크기 제한(`save_upload`), 시간 제한은 기존 도구와 같다.
 - `remote.py`는 기존 `separation/remote.py` 패턴을 따른다.
 
@@ -259,7 +255,7 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], Fi
 | `SELVA_DEVICE` | `cuda` | |
 | `SELVA_STEPS`, `SELVA_CFG` | `25`, `4.5` | 평가 설정과 같음 |
 | `SELVA_SEED` | `42` | 첫 시도의 seed |
-| `SELVA_SINGLE_MAX_S`, `SELVA_WINDOW_S` | `10`, `8` | 길이 처리 |
+| `SELVA_SINGLE_MAX_S`, `SELVA_WINDOW_S` | `15`, `8` | 길이 처리 |
 | `MAX_GENERATION_RETRIES` | `2` | 총 시도 = 1 + 이 값 |
 | `GENERATION_MARGIN_THRESHOLD` | `0.0` | 텍스트 TargetSel 합격 기준 (보정 전) |
 | `GENERATION_GPU` | `0` | Compose 전용 |
@@ -288,14 +284,14 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], Fi
   - 도구 서버 `generation`의 인증과 업로드 제한
   - 기존 테스트가 모두 그대로 통과
 - 실제 모델 확인 (A100, 빌린 GPU에서 한 번):
-  - SelVA real 단독 실행으로 8초와 10초 영상을 생성하고 시간과 최대 GPU 메모리를 기록
+  - SelVA real 단독 실행으로 8초와 15초 영상을 생성하고 시간과 최대 GPU 메모리를 기록
   - Compose 6개 컨테이너를 한 장에 올려 유음 영상(대체 생성 1회)과 무음 영상(자동 생성)을 끝까지 돌리고, 단계별 시간·최대 GPU 메모리·TargetSel 점수를 `docs/status.md`에 기록
 
 ## 11. 남은 일과 위험
 
 - FT 가중치용 HF 조직·저장소: `sogang-audyssey/selva-ft-selsync`(비공개) 생성 완료. 두 파일 업로드는 **구현 시작 전에 먼저 한다**.
 - 새 `audyssey-generation` 패키지가 공개인지 첫 업로드 뒤 확인 (비공개면 사용자가 공개로 전환).
-- SelVA GPU 메모리와 10초 생성 품질은 아직 측정하지 않았다.
+- SelVA GPU 메모리와 15초 생성 품질은 아직 측정하지 않았다.
 - `GENERATION_MARGIN_THRESHOLD`는 보정 전이다.
 - 분리 쪽도 플래너 구간을 SAM Audio에 넘긴다. 플래너 타이밍이 부정확하다는 같은 문제가 분리 품질에 영향을 주는지는 따로 확인한다.
 - RunPod에서 생성 도구를 띄우는 방법은 RunPod 검증 때 정한다.
@@ -307,7 +303,7 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], Fi
 - 최대 재시도 2회, 기본 seed 42, 가장 좋은 시도만 남김 (§6)
 - 생성 소스의 시도 횟수를 명령마다 되돌리지 않고 seed에 씀, 시도별 점수는 단계 메시지와 LangSmith에만 남김 (§6)
 - 긴 영상의 8초 창·1초 겹침·선형 크로스페이드 (§7.2)
-- 형제가 없을 때 채점 처리 (§7.2)
+- 텍스트 TargetSel만 사용하며, 형제가 없을 때 margin 없이 합격 (§7.2)
 - stub 생성음과 stub 채점 방식 (§7.3)
 - HF 저장소 안의 파일 배치 (§8)
 - 채점 임베딩으로 LAION-CLAP 630k-best 사용 (§7.2)

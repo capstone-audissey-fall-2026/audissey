@@ -25,16 +25,12 @@ def score_generation(
     track: Path,
     plan: SourcePlan,
     siblings: list[SourcePlan],
-    reference_stem: Path | None,
 ) -> FilterResult:
     settings = Settings()
-    files = {"track": ("track.wav", track.read_bytes(), "audio/wav")}
-    if reference_stem is not None:
-        files["reference"] = ("reference.wav", reference_stem.read_bytes(), "audio/wav")
     response = post(
         settings.generator_url,
         "/score",
-        files,
+        {"track": ("track.wav", track.read_bytes(), "audio/wav")},
         {
             "plan": plan.model_dump_json(),
             "siblings": json.dumps([p.model_dump() for p in siblings]),

@@ -40,7 +40,7 @@
 - **무음 영상인데 플래너가 대사만 냈을 때**: 생성할 소스가 하나도 없다. 작업은 `ready`로 끝나고 합치기는 무음 영상을 그대로 낸다. → Task 4 `test_silent_job_with_only_dialogue_is_ready`
 - **유음 영상에서 같은 분리 소스에 "생성으로 바꾸기"를 두 번**: 생성 소스가 둘이 되지 않고 같은 소스가 다른 seed로 다시 생성된다. → Task 5 `test_generate_twice_reuses_replacement`
 - **대체 생성 뒤 사용자가 분리 stem을 다시 켬**: 둘 다 켜진 채 합쳐진다(의도된 동작). residual은 바뀌지 않는다. → Task 5 `test_generate_does_not_change_residual`
-- **10초를 넘는 영상**: 창이 영상 끝까지 덮고, 결과 길이가 영상 길이와 같다. → Task 8 `test_windows_cover_long_video`, `test_long_video_output_length`
+- **15초를 넘는 영상**: 창이 영상 끝까지 덮고, 결과 길이가 영상 길이와 같다. → Task 8 `test_windows_cover_long_video`, `test_long_video_output_length`
 - **형제 소스가 없는 생성**: margin 없이 합격하고, 재시도하지 않는다. → Task 8 `test_score_without_siblings_passes`
 
 ---
@@ -103,8 +103,8 @@
 **Interfaces:**
 - Produces:
   - `Tools.generate: Callable[[Path, SourcePlan, Path, int], Path]` — `(video, plan, out_wav, seed)`; 48kHz 모노, 샘플 수 `round(duration * 48000)`
-  - `Tools.score_generation: Callable[[Path, SourcePlan, list[SourcePlan], Path | None], FilterResult]` — `(track, plan, siblings, reference_stem)`; `scores`에 `text_correct`(0/1), 형제가 있으면 `text_margin`
-  - 설정(`AUDYSSEY_` 접두사, 명세 §8 표와 같은 기본값): `generator: Literal["stub","real","remote"]="stub"`, `generator_url=""`, `selva_base_model="jnwnlee/SelVA"`, `selva_ft_model="sogang-audyssey/selva-ft-selsync"`, `selva_ft_generator_file="generator/S_O_s43/model_ema_step1000.pth"`, `selva_ft_encoder_file="encoder/S_O/best.pt"`, `selva_device="cuda"`, `selva_steps: int = 25`, `selva_cfg: float = 4.5`, `selva_seed: int = 42`, `selva_single_max_s: float = 10`, `selva_window_s: float = 8`, `max_generation_retries: int = Field(2, ge=0)`, `generation_margin_threshold: float = 0.0`
+  - `Tools.score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]` — `(track, plan, siblings)`; `scores`에 `text_correct`(0/1), 형제가 있으면 `text_margin`
+  - 설정(`AUDYSSEY_` 접두사, 명세 §8 표와 같은 기본값): `generator: Literal["stub","real","remote"]="stub"`, `generator_url=""`, `selva_base_model="jnwnlee/SelVA"`, `selva_ft_model="sogang-audyssey/selva-ft-selsync"`, `selva_ft_generator_file="generator/S_O_s43/model_ema_step1000.pth"`, `selva_ft_encoder_file="encoder/S_O/best.pt"`, `selva_device="cuda"`, `selva_steps: int = 25`, `selva_cfg: float = 4.5`, `selva_seed: int = 42`, `selva_single_max_s: float = 15`, `selva_window_s: float = 8`, `max_generation_retries: int = Field(2, ge=0)`, `generation_margin_threshold: float = 0.0`
   - `load_tools`: `generator == "remote"`이고 URL이 비면 `ValueError("AUDYSSEY_GENERATOR_URL is required for remote mode")`. 두 함수 모두 LangSmith `traceable`로 감싼다(`generate`, `score_generation`).
 
 - [ ] **Step 1: 실패하는 테스트**
@@ -181,7 +181,7 @@
 **Interfaces:**
 - Produces:
   - `POST /generate`: multipart `video`(파일), form `plan`(SourcePlan JSON), `seed`(int) → `audio/wav`
-  - `POST /score`: multipart `track`(파일), `reference`(파일, 선택), form `plan`, `siblings`(SourcePlan 목록 JSON) → `FilterResult` JSON
+  - `POST /score`: multipart `track`(파일), form `plan`, `siblings`(SourcePlan 목록 JSON) → `FilterResult` JSON
   - `/health`의 `tools`에 `"generation"`이 들어갈 수 있음
 
 - [ ] **Step 1: 실패하는 테스트** — stub으로 띄운 도구 서버에서 `/generate` 결과 길이, `/score` 결과 형태, 토큰 없으면 401, `AUDYSSEY_MAX_UPLOAD_MB` 초과 시 413, 잘못된 `siblings` JSON은 422. remote 클라이언트가 같은 결과를 돌려주는지(기존 remote 테스트 방식).
@@ -214,18 +214,18 @@
 - Produces (real.py 안, 테스트 대상):
   - `windows(duration: float, single_max: float, window: float, overlap: float = 1.0) -> list[tuple[float, float]]`
   - `crossfade_join(chunks: list[np.ndarray], spans: list[tuple[float, float]], sample_rate: int) -> np.ndarray`
-  - `generate(video, plan, out, seed) -> Path`, `score_generation(track, plan, siblings, reference_stem) -> FilterResult` (Task 3 계약)
+  - `generate(video, plan, out, seed) -> Path`, `score_generation(track, plan, siblings) -> FilterResult` (Task 3 계약)
 
 - [ ] **Step 1: 실패하는 테스트**
-  - `test_windows_short_video`: `windows(9.8, 10, 8) == [(0, 9.8)]`, `windows(10, 10, 8) == [(0, 10)]`
-  - `test_windows_cover_long_video` (Review Focus): `windows(20, 10, 8) == [(0, 8), (7, 15), (12, 20)]` — 간격 `window - overlap`, 마지막 창은 끝에 맞춤.
+  - `test_windows_short_video`: `windows(9.8, 15, 8) == [(0, 9.8)]`, `windows(15, 15, 8) == [(0, 15)]`
+  - `test_windows_cover_long_video` (Review Focus): `windows(20, 15, 8) == [(0, 8), (7, 15), (12, 20)]` — 간격 `window - overlap`, 마지막 창은 끝에 맞춤.
   - `test_crossfade_join_length_and_continuity`: 상수 1.0 조각들을 이으면 길이가 `round(20 * sr)`이고 모든 값이 1.0(선형 크로스페이드 합이 1).
   - `test_loads_ft_generator_and_selsync_encoder`(가짜 모듈): `hf_hub_download`가 FT 저장소의 두 파일과 베이스 저장소 세 파일을 `local_files_only=True`로 요청하고, 인코더는 베이스 `load_weights` 뒤 SelSync `state_dict`를 `strict=False`로 불러오며, 생성기는 FT 파일로 불러옴. 모델 로딩은 두 번째 호출에서 다시 일어나지 않음(`@cache`).
   - `test_generate_uses_eval_settings`: 가짜 `generate`가 `cfg_strength=4.5`, `num_steps=25`, 텍스트 `[plan.description]`, seed로 시드한 `rng`, 부정 프롬프트 없음으로 호출되고, spans를 쓰지 않음.
+  - `test_fifteen_seconds_uses_one_pass_by_default`: 기본 설정의 15초 영상은 한 번 생성하며 48kHz 모노 720000 샘플.
   - `test_long_video_output_length` (Review Focus): 20초 영상 → 가짜 생성이 3번 호출되고, 출력은 48kHz 모노 `round(20 * 48000)` 샘플.
   - `test_score_text_targetsel`: 가짜 CLAP 임베딩으로 자기 설명이 가장 가까우면 `text_correct=1`, `text_margin = 자기 − 형제 최댓값`, 임계값 미만이면 불합격하고 `reason`이 `"closer to sibling: <이름>"`.
   - `test_score_without_siblings_passes` (Review Focus)
-  - `test_score_records_reference_targetsel`: 참조 stem이 있으면 `ref_correct`, `ref_margin`이 `scores`에 들어가고 합격 판정에는 영향 없음.
 - [ ] **Step 2: 실패 확인** — `uv run python -m unittest tests.test_audyssey_selva_generation -v`
 - [ ] **Step 3: 구현**
   - 기준 코드는 SelVA `demo.py`(`get_my_textsynch('depth1')`, `get_my_mmaudio(model_cfg.model_name)`, `FlowMatching(min_sigma=0, inference_mode='euler', num_steps=...)`, `FeaturesUtils(..., enable_conditions=True, need_vae_encoder=False)`)와 `selva.utils.eval_utils.generate`/`load_video`다. 원본 경로: `/home/gwpark0741/NC/MV2A_compare/audio_eval/models/SelVA/demo.py`.
@@ -260,7 +260,7 @@
 ### Task 10: 실제 모델 확인과 PR 2
 
 - [ ] **Step 1: 베이스 가중치 준비** — 공용 캐시에 `jnwnlee/SelVA`의 세 파일이 없으면 받는다(`HF_HOME=/home/common/huggingface`, 토큰은 dnn5의 사용자 토큰을 환경변수로만). FT 저장소 두 파일도 같은 캐시에 받는다. CLAP·DFN5B·flan-t5·BigVGAN이 캐시에 있는지 확인.
-- [ ] **Step 2: 단독 실행** — 비어 있는 GPU(4~6 제외)에서 `gen/` 환경으로 real `generate`를 8초·10초 영상에 각각 돌려 시간·최대 GPU 메모리·TargetSel을 기록.
+- [ ] **Step 2: 단독 실행** — 비어 있는 GPU(4~6 제외)에서 `gen/` 환경으로 real `generate`를 8초·15초 영상에 각각 단일 패스로 돌려 시간·최대 GPU 메모리·TargetSel을 기록.
 - [ ] **Step 3: Compose E2E** — 6개 컨테이너를 GPU 한 장에 올려, 유음 영상(분리 뒤 `Generate` 1회)과 무음 영상(오디오를 뺀 같은 영상, 자동 생성)을 끝까지 돌리고 `render`까지 확인. 단계별 시간, 최대 GPU 메모리, 점수를 `docs/status.md` 실측 표에 추가하고 커밋(`docs(status): record generation measurements`).
 - [ ] **Step 4: PR 2** — `feat/generation-selva`를 push하고 `gh pr create`. 제목 `feat: connect selva selsync generation`. 본문에 요약, 확인 결과, 실측값, Deviations, 새 패키지 `audyssey-generation`이 머지 뒤 공개인지 확인해야 한다는 안내. 끝에 `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 

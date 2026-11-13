@@ -41,11 +41,11 @@ AUDYSSEY_TOOL_TOKEN=local-test uv run audyssey tool-server --tool generation --i
 AUDYSSEY_TOOL_TOKEN=local-test AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run audyssey serve
 ```
 
-real SelVA·SelSync, 생성 전용 `gen/` 환경·이미지·Compose 서비스는 PR 2에서 연결합니다. 현재 RunPod 구성은 생성 도구를 포함하지 않습니다. 별도 생성 프로세스/Pod 구성과 검증은 이후에 진행합니다.
+real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, numpy 2 / torch 2.6 전용 `gen/` 환경과 `audyssey-generation` 이미지로 분리합니다. 현재 RunPod 구성은 생성 도구를 포함하지 않습니다. RunPod에서 main만 띄울 때는 `AUDYSSEY_GENERATOR=stub`으로 둡니다. 별도 생성 Pod 구성과 검증은 이후에 진행합니다.
 
 ## GPU 서버 한 대 (Docker Compose)
 
-A100 80GB급 한 장이면 5개 컨테이너가 모두 올라갑니다(기본 설정 기준 최대 약 50~70GB, [실측](status.md)).
+Compose는 6개 컨테이너로 구성합니다. A100 80GB 한 장에 모두 올렸을 때 최대 GPU 메모리는 56.6GB였고, 생성 컨테이너 몫은 약 6.7GB입니다([실측](status.md)).
 
 **1. 준비 (처음 한 번)**
 ```bash
@@ -61,19 +61,19 @@ docker compose up -d      # 백그라운드로 실행
 docker compose logs -f vllm   # "Application startup complete"가 뜨면 준비 끝 (약 1~2분). Ctrl+C는 로그 보기만 멈춤
 ```
 
-main, separation, judge, grounding, vllm 컨테이너 5개가 뜹니다.
+main, separation, judge, grounding, generation, vllm 컨테이너 6개가 뜹니다. 새 `audyssey-generation` GHCR 패키지는 첫 게시 뒤 공개 상태인지 확인하고, 비공개면 GitHub 패키지 설정에서 공개로 전환합니다. 이미지에는 가중치가 없습니다.
 플래너를 vLLM 대신 Gemini로 쓰려면 `.env`에 `GOOGLE_API_KEY`를 넣고 vLLM 없이 띄웁니다.
 ```bash
 AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
 AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash \
-docker compose up -d main separation judge grounding
+docker compose up -d main separation judge grounding generation
 ```
 
 **3. 접속**
 - 서버에서: http://localhost:8600
 - 원격 서버라면 노트북에서 SSH 터널을 열고 같은 주소로 접속합니다: `ssh -L 8600:localhost:8600 <서버>`
-- 분리·Judge·그라운딩 모델은 첫 요청 때 GPU에 올라가서 첫 작업만 1~2분 더 걸립니다. 그다음부터는 컨테이너를 내릴 때까지 올라간 채로 재사용합니다.
-- 진행 로그: `docker compose logs -f main separation judge`
+- 분리·Judge·그라운딩·생성 모델은 첫 요청 때 GPU에 올라가서 첫 작업만 1~2분 더 걸립니다. 그다음부터는 컨테이너를 내릴 때까지 올라간 채로 재사용합니다.
+- 진행 로그: `docker compose logs -f main separation judge generation`
 
 **4. 내리기**
 ```bash
@@ -89,8 +89,8 @@ nvidia-smi                # 메모리가 비었는지 확인
 - main에는 인증이 없습니다. `127.0.0.1` 밖으로 열지 말고, 원격에서는 SSH 터널을 씁니다. 외부에 꼭 열어야 하면 인증이 있는 리버스 프록시를 앞에 둡니다.
 
 **GPU 지정**
-- 도구별로 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_VLLM_GPU`에 GPU 번호를 넣습니다. 번호가 같으면 그 GPU를 나눠 씁니다.
-- `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이고, vLLM 메모리 비율은 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(80GB A100에서 확인).
+- 도구별로 `AUDYSSEY_SEPARATION_GPU`, `AUDYSSEY_JUDGE_GPU`, `AUDYSSEY_GROUNDING_GPU`, `AUDYSSEY_GENERATION_GPU`, `AUDYSSEY_VLLM_GPU`에 GPU 번호를 넣습니다. 번호가 같으면 그 GPU를 나눠 씁니다.
+- `.env.example`은 GPU 0 한 장을 나눠 쓰는 설정이고, vLLM 메모리 비율은 `AUDYSSEY_VLLM_GPU_UTIL=0.2`입니다(생성 포함 6개 컨테이너를 80GB A100 한 장에서 확인).
 - vLLM에 GPU를 따로 주면 이 값을 `0.85` 정도로 올립니다.
 
 **가중치와 작업 파일**
@@ -126,6 +126,7 @@ AUDYSSEY_TOOL_TOKEN=<Pod와 같은 토큰>
 AUDYSSEY_SEPARATOR_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 AUDYSSEY_FILTER_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
 AUDYSSEY_GROUNDING_URL=https://YOUR-POD-ID-8700.proxy.runpod.net
+AUDYSSEY_GENERATOR=stub  # 현재 RunPod 구성에는 생성 서버가 없음
 # 플래너는 Gemini 권장
 AUDYSSEY_PLANNER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 AUDYSSEY_PLANNER_MODEL=gemini-2.5-flash
@@ -166,6 +167,25 @@ AUDYSSEY_SEPARATOR=remote AUDYSSEY_SEPARATOR_URL=http://127.0.0.1:8700 uv run au
 uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --out work/jobs/smoke-text
 uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --span 0 3 --out work/jobs/smoke-span
 ```
+
+### 생성 모듈 (SelVA FT + SelSync)
+
+분리 환경과 섞지 않고 [gen/](../gen/README.md)의 잠금 파일을 사용합니다. 가중치는 아래 절의 명령으로 미리 준비합니다.
+
+```bash
+uv sync --project gen --locked
+export HF_HOME=/home/common/huggingface HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0
+export AUDYSSEY_TOOL_TOKEN=<임의-토큰>
+uv run --project gen --locked audyssey tool-server --tool generation --impl real --host 127.0.0.1 --port 8701
+# 다른 터미널: 같은 AUDYSSEY_TOOL_TOKEN을 설정
+AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run audyssey serve
+```
+
+- 기본 설정: `large_44k`, bf16, Euler 25회, CFG 4.5, 부정 프롬프트 없음. 설명만 사용하며 계획 구간·시각 힌트로 자르지 않습니다.
+- 15초까지 단일 생성, 그보다 길면 8초 창을 잇습니다. 마지막 창은 끝에 맞추므로 실제 겹침이 1초보다 길 수 있으며 전체 겹침을 선형 크로스페이드합니다. 44.1kHz 결과를 48kHz 모노로 리샘플하고 `round(duration * 48000)` 샘플에 맞춥니다.
+- CLAP 텍스트 TargetSel은 48kHz 모노 트랙 전체의 고정 10초 창(1초 겹침, 마지막은 끝에 정렬, 10초 이하는 한 창으로 CLAP 기본 패딩)별 L2 정규화 임베딩을 평균 후 다시 L2 정규화해 사용하며, 자기 설명이 가장 가깝고 margin이 임계값 이상이면 합격합니다. 형제가 없으면 margin 없이 합격합니다.
+- 실행 중 다운로드를 막기 위해 real 생성·채점은 `HF_HUB_OFFLINE=1`을 필수로 요구합니다. 모델은 첫 호출 뒤 재사용하며 GPU 호출은 한 번에 하나씩 실행합니다.
+- 시간·메모리 실측은 [현재 상태](status.md)에 있습니다. 15초 한 번 생성은 결과가 깨지지 않지만 8초 학습 모델이라 품질은 직접 들어 보고 판단합니다. `GENERATION_MARGIN_THRESHOLD`는 보정 전입니다.
 
 ## 플래너 연결 (Gemini, vLLM)
 
@@ -263,11 +283,28 @@ $H roberta-base; $H bert-base-uncased; $H facebook/bart-base
 $H Qwen/Qwen2.5-VL-3B-Instruct
 ```
 
+**생성 가중치** (서버 실행 전 운영자가 받음): 공개 베이스는 승인 없이 받을 수 있습니다. 비공개 FT 저장소는 `sogang-audyssey` 조직 멤버에게만 열리며, 팀원 각자 위 로그인 단계에서 자신의 읽기 토큰을 사용합니다. 토큰과 FT 가중치는 레포·공개 이미지에 넣지 않습니다.
+
+```bash
+export HF_HOME=/home/common/huggingface
+H="uvx --from huggingface_hub[cli]<1.0 huggingface-cli download"
+$H jnwnlee/SelVA weights/video_enc_sup_5.pth ext_weights/v1-44.pth ext_weights/synchformer_state_dict.pth
+$H sogang-audyssey/selva-ft-selsync generator/S_O_s43/model_ema_step1000.pth encoder/S_O/best.pt
+$H apple/DFN5B-CLIP-ViT-H-14-384
+$H google/flan-t5-base
+$H nvidia/bigvgan_v2_44khz_128band_512x
+$H lukewys/laion_clap 630k-best.pt
+$H roberta-base
+```
+
+공식 생성기 `weights/generator_large_44khz_sup_5.pth`는 사용하지 않습니다. FT 생성기(EMA)와 SelSync 인코더만 덮어씁니다. SelVA 코드는 라이선스 표시가 없어 복사하지 않고 고정 커밋 의존성으로 설치하며, 가중치 라이선스는 CC-BY-NC-SA-4.0입니다.
+
 | 모델 | 설정 | 캐시에 필요한 것 |
 |---|---|---|
 | 분리 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv`, `t5-base` |
 | 필터링 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge`의 `sam_audio` revision 전체, `main` revision의 JSON(설정·토크나이저, 약 2MB) |
 | 그라운딩 | `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1`의 `config.json`, `sam3.1_multiplex.pt` |
+| 생성 | `AUDYSSEY_SELVA_BASE_MODEL` / `AUDYSSEY_SELVA_FT_MODEL` | 위 베이스 3개 + FT 2개, DFN5B CLIP·flan-t5·BigVGAN·CLAP·roberta-base |
 | 후보 고르기 (선택) | 후보 2개 이상 | `lukewys/laion_clap`의 `630k-best.pt`, `roberta-base`, `bert-base-uncased`, `facebook/bart-base` |
 | 플래너 (선택) | `AUDYSSEY_VLLM_MODEL` | `Qwen/Qwen2.5-VL-3B-Instruct` |
 
@@ -321,22 +358,22 @@ $H Qwen/Qwen2.5-VL-3B-Instruct
 | `AUDYSSEY_SAM3_MODEL` / `AUDYSSEY_SAM3_DEVICE` | `facebook/sam3.1` / `cuda` | 그라운딩 모델과 장치 (CUDA 전용) |
 | `AUDYSSEY_SAM3_TRACK_FPS` | `2` | 마스크 추적 fps. `0`이면 원본 fps (24GB GPU에서는 메모리 부족 위험) |
 
-Compose에서만 쓰는 값(`.env`): `HF_CACHE`, `AUDYSSEY_{SEPARATION,JUDGE,GROUNDING,VLLM}_GPU`, `AUDYSSEY_VLLM_MODEL`,
+Compose에서만 쓰는 값(`.env`): `HF_CACHE`, `AUDYSSEY_{SEPARATION,JUDGE,GROUNDING,GENERATION,VLLM}_GPU`, `AUDYSSEY_VLLM_MODEL`,
 `AUDYSSEY_VLLM_GPU_UTIL`, `GOOGLE_API_KEY`, `LANGSMITH_*`.
 
-**생성** (real 관련 설정은 PR 2에서 연결)
+**생성**
 
 | 환경변수 | 기본값 | 설명 |
 |---|---|---|
-| `AUDYSSEY_GENERATOR` / `AUDYSSEY_GENERATOR_URL` | `stub` / 빈 값 | 생성과 채점 도구. 현재 `stub`, `remote` 지원, `real`은 PR 2에서 연결. remote는 URL 필수 |
+| `AUDYSSEY_GENERATOR` / `AUDYSSEY_GENERATOR_URL` | `stub` / 빈 값 | 생성과 채점 도구. `stub`, `real`, `remote`. Compose 기본 `remote` / `http://generation:8700`, remote는 URL 필수 |
 | `AUDYSSEY_SELVA_SEED` | `42` | 첫 생성 seed. 다시 생성할 때 누적 attempts로 증가 |
 | `AUDYSSEY_MAX_GENERATION_RETRIES` | `2` | 루프마다 최대 재시도 수(0 이상). 총 시도는 1 + 이 값 |
-| `AUDYSSEY_GENERATION_MARGIN_THRESHOLD` | `0.0` | 텍스트 TargetSel 합격 임계값. 보정 전, PR 2에서 연결(stub은 진폭으로 판정) |
-| `AUDYSSEY_SELVA_BASE_MODEL` | `jnwnlee/SelVA` | 베이스 저장소, PR 2에서 연결 |
-| `AUDYSSEY_SELVA_FT_MODEL` | `sogang-audyssey/selva-ft-selsync` | 비공개 FT 저장소, PR 2에서 연결 |
-| `AUDYSSEY_SELVA_FT_GENERATOR_FILE` | `generator/S_O_s43/model_ema_step1000.pth` | FT 생성기 파일, PR 2에서 연결 |
-| `AUDYSSEY_SELVA_FT_ENCODER_FILE` | `encoder/S_O/best.pt` | SelSync 인코더 파일, PR 2에서 연결 |
-| `AUDYSSEY_SELVA_DEVICE` | `cuda` | 생성 장치, PR 2에서 연결 |
-| `AUDYSSEY_SELVA_STEPS` / `AUDYSSEY_SELVA_CFG` | `25` / `4.5` | Euler 생성 설정, PR 2에서 연결 |
-| `AUDYSSEY_SELVA_SINGLE_MAX_S` / `AUDYSSEY_SELVA_WINDOW_S` | `10` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초), PR 2에서 연결 |
-| `AUDYSSEY_GENERATION_GPU` | `0` | Compose 전용, PR 2에서 연결. 현재 Compose에는 생성 서비스 없음 |
+| `AUDYSSEY_GENERATION_MARGIN_THRESHOLD` | `0.0` | 텍스트 TargetSel 합격 임계값. 보정 전(stub은 진폭으로 판정) |
+| `AUDYSSEY_SELVA_BASE_MODEL` | `jnwnlee/SelVA` | 베이스 저장소 |
+| `AUDYSSEY_SELVA_FT_MODEL` | `sogang-audyssey/selva-ft-selsync` | 비공개 FT 저장소 |
+| `AUDYSSEY_SELVA_FT_GENERATOR_FILE` | `generator/S_O_s43/model_ema_step1000.pth` | FT 생성기 파일 |
+| `AUDYSSEY_SELVA_FT_ENCODER_FILE` | `encoder/S_O/best.pt` | SelSync 인코더 파일 |
+| `AUDYSSEY_SELVA_DEVICE` | `cuda` | 생성 장치 |
+| `AUDYSSEY_SELVA_STEPS` / `AUDYSSEY_SELVA_CFG` | `25` / `4.5` | Euler 생성 설정 |
+| `AUDYSSEY_SELVA_SINGLE_MAX_S` / `AUDYSSEY_SELVA_WINDOW_S` | `15` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초) |
+| `AUDYSSEY_GENERATION_GPU` | `0` | Compose 생성 서비스 GPU 번호 |

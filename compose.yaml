@@ -17,6 +17,8 @@ services:
       AUDYSSEY_FILTER_URL: ${AUDYSSEY_FILTER_URL:-http://judge:8700}
       AUDYSSEY_GROUNDER: ${AUDYSSEY_GROUNDER:-remote}
       AUDYSSEY_GROUNDING_URL: ${AUDYSSEY_GROUNDING_URL:-http://grounding:8700}
+      AUDYSSEY_GENERATOR: ${AUDYSSEY_GENERATOR:-remote}
+      AUDYSSEY_GENERATOR_URL: ${AUDYSSEY_GENERATOR_URL:-http://generation:8700}
       AUDYSSEY_WORK_DIR: /app/work/jobs
     volumes: ["jobs:/app/work/jobs"]
 
@@ -81,6 +83,26 @@ services:
           devices:
             - driver: nvidia
               device_ids: ["${AUDYSSEY_GROUNDING_GPU:-0}"]
+              capabilities: [gpu]
+
+  generation:
+    image: ghcr.io/capstone-audissey-fall-2026/audyssey-generation:latest
+    build:
+      context: .
+      dockerfile: docker/generation.Dockerfile
+    env_file: .env
+    environment:
+      HF_HOME: /hf
+      HF_HUB_OFFLINE: "1"
+      CUDA_VISIBLE_DEVICES: "0"
+      AUDYSSEY_TOOL_TOKEN: ${AUDYSSEY_TOOL_TOKEN:?set AUDYSSEY_TOOL_TOKEN in .env}
+    volumes: ["${HF_CACHE:-~/.cache/huggingface}:/hf:ro"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${AUDYSSEY_GENERATION_GPU:-0}"]
               capabilities: [gpu]
 
   vllm:
