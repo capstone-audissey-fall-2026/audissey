@@ -552,3 +552,22 @@ class GraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             graph.handle_command(job, Generate(source_id="s3", description=" "), self.ctx)
         self.assertEqual(job.model_dump_json(), snapshot)
+
+    def test_preprocess_keeps_audible_opposite_polarity_stereo(self):
+        import subprocess
+        from audyssey.media import write_wav
+        tone = 0.5 * np.sin(2 * np.pi * 440 * np.arange(48000) / 48000)
+        stereo = np.column_stack((tone, -tone))
+        audio = write_wav(self.root / "opposite.wav", stereo)
+        video = self.directory / "opposite.mkv"
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(self.directory / self.job.video_path),
+                        "-i", str(audio), "-map", "0:v", "-map", "1:a", "-t", "1",
+                        "-c:v", "copy", "-c:a", "pcm_f32le", str(video)], check=True, capture_output=True)
+        self.job.video_path = video.name
+        job = graph.analyze(self.job, self.ctx)
+        self.assertEqual(job.state, "ready", job.error)
+        self.assertFalse(job.silent)
+        np.testing.assert_array_equal(read_wav(self.directory / job.mono_path), 0)
+        np.testing.assert_allclose(read_wav(self.directory / job.audio_path), stereo, atol=1e-7)
+        self.assertIsNotNone(job.residual.path)
+        self.assertTrue(all(s.origin == "separated" for s in job.sources))

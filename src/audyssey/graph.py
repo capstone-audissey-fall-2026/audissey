@@ -344,7 +344,7 @@ def analyze(
         else:
             extract_audio(directory / job.video_path, directory / "audio.wav", False)
             extract_audio(directory / job.video_path, directory / "mono.wav", True)
-            job.silent = is_silent(directory / "mono.wav")
+            job.silent = is_silent(directory / "audio.wav")
             if job.silent:
                 write_silence(directory / "audio.wav", duration, channels)
                 write_silence(directory / "mono.wav", duration, 1)
