@@ -41,7 +41,7 @@ AUDYSSEY_TOOL_TOKEN=local-test uv run audyssey tool-server --tool generation --i
 AUDYSSEY_TOOL_TOKEN=local-test AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run audyssey serve
 ```
 
-real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, 다른 GPU 도구와 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다.
+real 생성은 팀 내부 모델(internal model)과 CLAP 채점을 사용하며, 다른 GPU 도구와 같은 `gpu/` 환경과 `audyssey-tools` 이미지에 들어 있습니다.
 
 ## 실제 모델로 실행하기 (팀원용)
 
@@ -56,7 +56,7 @@ real 생성은 SelVA FT + SelSync와 CLAP 채점을 사용하며, 다른 GPU 도
 
 1. **Hugging Face 계정**을 만들고, 아래 모델 페이지에서 각각 접근 승인(SAM License)을 요청합니다. 승인에 하루 정도 걸릴 수 있습니다.
    - `facebook/sam-audio-large-tv`, `facebook/sam-audio-judge`, `facebook/sam3.1`
-2. **팀 HF 조직 `sogang-audyssey`에 가입**합니다. 관리자에게 HF 아이디를 알려 주고 초대를 수락합니다. 생성 FT 가중치(`sogang-audyssey/selva-ft-selsync`)는 비공개라 조직 멤버만 받을 수 있습니다.
+2. **팀 HF 조직 `sogang-audyssey`에 가입**합니다. 관리자에게 HF 아이디를 알려 주고 초대를 수락합니다. 생성 모델 가중치(`sogang-audyssey/internal-model`)는 비공개라 조직 멤버만 받을 수 있습니다.
 3. HF 설정 → Access Tokens에서 **읽기(Read) 토큰**을 만듭니다. 토큰은 가중치를 받을 때만 쓰고, 레포·`.env`·이미지·채팅에 넣지 않습니다.
 4. (Gemini 플래너를 쓸 때) [Google AI Studio](https://aistudio.google.com/apikey)에서 API 키를 만듭니다. 3B vLLM 플래너는 설명 품질이 낮아서 데모에는 Gemini를 권장합니다([실측](status.md)).
 
@@ -221,7 +221,7 @@ uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.m
 uv run --project gpu --locked python scripts/sam_audio_smoke.py samples/sample.mp4 --description "a person speaking" --span 0 3 --out work/jobs/smoke-span
 ```
 
-### 생성 모듈 (SelVA FT + SelSync)
+### 생성 모듈 (internal model)
 
 다른 GPU 도구와 같은 `gpu/` 환경을 씁니다. 가중치는 아래 절의 명령으로 미리 준비합니다.
 
@@ -316,16 +316,15 @@ LANGSMITH_PROJECT=audyssey
 
 받는 방법은 [A-2](#a-내-gpu-서버에서-docker-compose)(서버)와 [B-1](#b-노트북--runpod)(RunPod 볼륨)에 있고, 받을 목록은 [`scripts/download-weights.sh`](../scripts/download-weights.sh) 하나에 모아 두었습니다. 승인·조직 가입 조건은 [0. 공통 준비](#0-공통-준비-사람마다-처음-한-번)를 봅니다.
 
-- 공식 생성기 `weights/generator_large_44khz_sup_5.pth`는 쓰지 않습니다. FT 생성기(EMA)와 SelSync 인코더만 덮어씁니다.
-- SelVA 코드는 라이선스 표시가 없어 레포에 복사하지 않고 고정 커밋 의존성으로 설치합니다. 가중치 라이선스는 CC-BY-NC-SA-4.0입니다.
-- 토큰과 FT 가중치는 레포·공개 이미지에 넣지 않습니다.
+- 생성 모델의 공개 베이스 코드는 라이선스 표시가 없어 레포에 복사하지 않고 고정 커밋 의존성으로 설치합니다. 가중치 라이선스는 CC-BY-NC-SA-4.0입니다.
+- 토큰과 내부 모델 가중치는 레포·공개 이미지에 넣지 않습니다.
 
 | 모델 | 설정 | 캐시에 필요한 것 |
 |---|---|---|
 | 분리 | `AUDYSSEY_SAM_AUDIO_MODEL` | `facebook/sam-audio-large-tv`, `t5-base` |
 | 필터링 | `AUDYSSEY_SAM_AUDIO_JUDGE_MODEL` | `facebook/sam-audio-judge`의 `sam_audio` revision 전체, `main` revision의 JSON(설정·토크나이저, 약 2MB) |
 | 그라운딩 | `AUDYSSEY_SAM3_MODEL` | `facebook/sam3.1`의 `config.json`, `sam3.1_multiplex.pt` |
-| 생성 | `AUDYSSEY_SELVA_BASE_MODEL` / `AUDYSSEY_SELVA_FT_MODEL` | 위 베이스 3개 + FT 2개, DFN5B CLIP·flan-t5·BigVGAN·CLAP·roberta-base |
+| 생성 | `AUDYSSEY_GEN_BASE_MODEL` / `AUDYSSEY_GEN_MODEL` | 공개 베이스 3개 + 내부 모델 2개, DFN5B CLIP·flan-t5·BigVGAN·CLAP·roberta-base |
 | 후보 고르기 (선택) | 후보 2개 이상 | `lukewys/laion_clap`의 `630k-best.pt`, `roberta-base`, `bert-base-uncased`, `facebook/bart-base` |
 | 플래너 (선택) | `AUDYSSEY_VLLM_MODEL` | `Qwen/Qwen2.5-VL-3B-Instruct` |
 
@@ -387,14 +386,14 @@ Compose에서만 쓰는 값(`.env`): `HF_CACHE`, `AUDYSSEY_{SEPARATION,JUDGE,GRO
 | 환경변수 | 기본값 | 설명 |
 |---|---|---|
 | `AUDYSSEY_GENERATOR` / `AUDYSSEY_GENERATOR_URL` | `stub` / 빈 값 | 생성과 채점 도구. `stub`, `real`, `remote`. Compose 기본 `remote` / `http://generation:8700`, remote는 URL 필수 |
-| `AUDYSSEY_SELVA_SEED` | `42` | 첫 생성 seed. 다시 생성할 때 누적 attempts로 증가 |
+| `AUDYSSEY_GEN_SEED` | `42` | 첫 생성 seed. 다시 생성할 때 누적 attempts로 증가 |
 | `AUDYSSEY_MAX_GENERATION_RETRIES` | `2` | 루프마다 최대 재시도 수(0 이상). 총 시도는 1 + 이 값 |
 | `AUDYSSEY_GENERATION_MARGIN_THRESHOLD` | `0.0` | 텍스트 TargetSel 합격 임계값. 보정 전(stub은 진폭으로 판정) |
-| `AUDYSSEY_SELVA_BASE_MODEL` | `jnwnlee/SelVA` | 베이스 저장소 |
-| `AUDYSSEY_SELVA_FT_MODEL` | `sogang-audyssey/selva-ft-selsync` | 비공개 FT 저장소 |
-| `AUDYSSEY_SELVA_FT_GENERATOR_FILE` | `generator/S_O_s43/model_ema_step1000.pth` | FT 생성기 파일 |
-| `AUDYSSEY_SELVA_FT_ENCODER_FILE` | `encoder/S_O/best.pt` | SelSync 인코더 파일 |
-| `AUDYSSEY_SELVA_DEVICE` | `cuda` | 생성 장치 |
-| `AUDYSSEY_SELVA_STEPS` / `AUDYSSEY_SELVA_CFG` | `25` / `4.5` | Euler 생성 설정 |
-| `AUDYSSEY_SELVA_SINGLE_MAX_S` / `AUDYSSEY_SELVA_WINDOW_S` | `15` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초) |
+| `AUDYSSEY_GEN_BASE_MODEL` | `jnwnlee/SelVA` | 공개 베이스 저장소 |
+| `AUDYSSEY_GEN_MODEL` | `sogang-audyssey/internal-model` | 비공개 내부 모델 저장소 |
+| `AUDYSSEY_GEN_GENERATOR_FILE` | `generator/S_O_s43/model_ema_step1000.pth` | 내부 모델 생성기 파일 |
+| `AUDYSSEY_GEN_ENCODER_FILE` | `encoder/S_O/best.pt` | 내부 모델 인코더 파일 |
+| `AUDYSSEY_GEN_DEVICE` | `cuda` | 생성 장치 |
+| `AUDYSSEY_GEN_STEPS` / `AUDYSSEY_GEN_CFG` | `25` / `4.5` | Euler 생성 설정 |
+| `AUDYSSEY_GEN_SINGLE_MAX_S` / `AUDYSSEY_GEN_WINDOW_S` | `15` / `8` | 단일 생성 최대 길이 / 긴 영상 창 길이(초) |
 | `AUDYSSEY_GENERATION_GPU` | `0` | Compose 생성 서비스 GPU 번호 |

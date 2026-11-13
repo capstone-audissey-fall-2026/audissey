@@ -1,4 +1,4 @@
-"""CPU doubles for the pinned SelVA and CLAP tensor/model boundaries."""
+"""CPU doubles for the generation model and CLAP tensor/model boundaries."""
 import math
 from contextlib import nullcontext
 from dataclasses import dataclass

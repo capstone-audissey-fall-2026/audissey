@@ -71,7 +71,7 @@ flowchart TB
 유음 업로드는 기존 분리 흐름을 돌리고, 생성은 명령을 받을 때만 합니다. 무음 업로드는 플래닝·검증 후 비대사 소스를 생성합니다.
 `generate`가 분리 소스를 가리키면 `<원래 이름> (generated)` 소스를 만들고 원래 소스는 지우지 않고 `keep=False`로 둡니다.
 같은 분리 소스의 대체 생성 소스가 있으면 재사용합니다. 생성 소스 대상이면 그 자리에서 설명을 바꾸고 다시 생성합니다.
-`attempts`는 누적되며 seed는 `AUDYSSEY_SELVA_SEED + attempts - 1`입니다. 루프마다 최대 `1 + MAX_GENERATION_RETRIES`번 시도하고, 합격 시 멈추며 최고 `text_margin` 결과만 남깁니다(없으면 0, 동점이면 최신).
+`attempts`는 누적되며 seed는 `AUDYSSEY_GEN_SEED + attempts - 1`입니다. 루프마다 최대 `1 + MAX_GENERATION_RETRIES`번 시도하고, 합격 시 멈추며 최고 `text_margin` 결과만 남깁니다(없으면 0, 동점이면 최신).
 단계 키는 `generate:<id>`, `score:<id>`이고, 각 시도의 점수는 score 메시지와 LangSmith에 남깁니다. 채점은 기존 `FilterResult`를 씁니다.
 형제 계획은 대사·자기 자신·자기가 대체하는 원본을 제외합니다. 텍스트 TargetSel만으로 합격을 판정합니다. `Source.replaces`는 대체 생성과 원래 분리 소스의 연결을 유지합니다.
 real 생성은 기본 15초까지 단일 패스이며, 그보다 길면 8초 창·1초 겹침으로 처리합니다. 마지막 창은 끝에 맞추고 전체 겹침을 선형 크로스페이드합니다.
@@ -126,7 +126,7 @@ POST /generate  multipart video, plan, seed                   → WAV
 POST /score     multipart track, plan, siblings → FilterResult
 ```
 
-생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON입니다. 생성 track만 업로드하며 업로드 이름은 저장 경로로 사용하지 않습니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 SelVA FT·SelSync와 CLAP 채점으로 구현하며 다른 GPU 도구와 같은 `gpu/` 환경에서 실행합니다.
+생성 도구도 `audyssey tool-server --tool generation --impl stub`으로 실행합니다. `siblings`는 SourcePlan 목록 JSON입니다. 생성 track만 업로드하며 업로드 이름은 저장 경로로 사용하지 않습니다. 기존 Bearer 인증·파일별 업로드 크기 제한·remote 시간 제한을 동일하게 적용합니다. `real` 생성은 팀 내부 모델(internal model)과 CLAP 채점으로 구현하며 다른 GPU 도구와 같은 `gpu/` 환경에서 실행합니다.
 
 ## 코드 위치
 

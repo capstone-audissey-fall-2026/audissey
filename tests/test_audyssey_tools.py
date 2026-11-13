@@ -98,7 +98,7 @@ class ToolsTests(unittest.TestCase):
             video = make_video(root / "silent.mp4", audio=False)
             plan = planning.plan(video, Path("unused"), 3, [])[2]
             sibling = plan.model_copy(update={"name": "other", "description": "rain"})
-            for seed, passed in [(settings.selva_seed, False), (settings.selva_seed + 1, True)]:
+            for seed, passed in [(settings.gen_seed, False), (settings.gen_seed + 1, True)]:
                 out = tools.generate(video, plan, root / "track.wav", seed)
                 result = tools.score_generation(out, plan, [sibling])
                 self.assertEqual(result.passed, passed)
@@ -106,7 +106,7 @@ class ToolsTests(unittest.TestCase):
                 self.assertGreater(result.scores["text_margin"], 0)
                 self.assertEqual(result.reason, "" if passed else "stub: first seed")
                 self.assertNotIn("text_margin", tools.score_generation(out, plan, []).scores)
-            other = tools.generate(video, sibling, root / "other.wav", settings.selva_seed)
+            other = tools.generate(video, sibling, root / "other.wav", settings.gen_seed)
             self.assertTrue(tools.score_generation(other, sibling, [plan]).passed)
 
     def test_remote_generator_requires_url(self):

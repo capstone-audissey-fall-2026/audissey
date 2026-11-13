@@ -8,7 +8,7 @@ import numpy as np
 
 from audyssey.contracts import SourcePlan, Span
 from audyssey.media import read_wav, write_wav
-from tests.selva_fakes import runtime
+from tests.generation_fakes import runtime
 
 
 class SelvaGenerationTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class SelvaGenerationTests(unittest.TestCase):
         with patch.dict('sys.modules', fake.modules), patch.object(self.real, 'probe', return_value=(duration, 0)):
             return self.real.generate(Path('video.mp4'), self.plan, self.root / 'track.wav', seed)
 
-    def test_loads_ft_generator_and_selsync_encoder(self):
+    def test_loads_internal_generator_and_encoder(self):
         fake = runtime()
         self.run_generate(fake)
         self.run_generate(fake)
@@ -63,8 +63,8 @@ class SelvaGenerationTests(unittest.TestCase):
             ('jnwnlee/SelVA', 'weights/video_enc_sup_5.pth'),
             ('jnwnlee/SelVA', 'ext_weights/v1-44.pth'),
             ('jnwnlee/SelVA', 'ext_weights/synchformer_state_dict.pth'),
-            ('sogang-audyssey/selva-ft-selsync', 'generator/S_O_s43/model_ema_step1000.pth'),
-            ('sogang-audyssey/selva-ft-selsync', 'encoder/S_O/best.pt'),
+            ('sogang-audyssey/internal-model', 'generator/S_O_s43/model_ema_step1000.pth'),
+            ('sogang-audyssey/internal-model', 'encoder/S_O/best.pt'),
         })
         self.assertTrue(all(c.kwargs['local_files_only'] for c in fake.hub.hf_hub_download.call_args_list))
         self.assertEqual(len(fake.hub.hf_hub_download.call_args_list), 5)

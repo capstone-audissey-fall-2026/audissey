@@ -20,9 +20,10 @@ dl lukewys/laion_clap 630k-best.pt
 dl roberta-base
 dl bert-base-uncased
 dl facebook/bart-base
-# Generation: SelVA base, private FT weights (sogang-audyssey members only), encoders, vocoder
+# Generation (internal model): public base weights, private weights (sogang-audyssey members only),
+# encoders, vocoder
 dl jnwnlee/SelVA weights/video_enc_sup_5.pth ext_weights/v1-44.pth ext_weights/synchformer_state_dict.pth
-dl sogang-audyssey/selva-ft-selsync generator/S_O_s43/model_ema_step1000.pth encoder/S_O/best.pt
+dl sogang-audyssey/internal-model generator/S_O_s43/model_ema_step1000.pth encoder/S_O/best.pt
 dl apple/DFN5B-CLIP-ViT-H-14-384
 dl google/flan-t5-base
 dl nvidia/bigvgan_v2_44khz_128band_512x
