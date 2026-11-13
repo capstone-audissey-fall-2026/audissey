@@ -120,13 +120,9 @@ class ToolServerTests(unittest.TestCase):
         self.assertEqual((rate, data.shape), (48000, (48000,)))
         direct = stub.generate(video, plan, self.root / "direct.wav", 43)
         np.testing.assert_array_equal(data.reshape(-1, 1), read_wav(direct))
-        for reference in [False, True]:
-            files = {"track": ("track.wav", response.content)}
-            if reference:
-                files["reference"] = ("reference.wav", self.mono.read_bytes())
-            scored = client.post("/score", files=files, data={"plan": plan.model_dump_json(), "siblings": "[]"}, headers=headers)
-            self.assertEqual(scored.status_code, 200, scored.text)
-            self.assertEqual(FilterResult.model_validate(scored.json()), stub.score_generation(direct, plan, [], self.mono if reference else None))
+        scored = client.post("/score", files={"track": ("track.wav", response.content)}, data={"plan": plan.model_dump_json(), "siblings": "[]"}, headers=headers)
+        self.assertEqual(scored.status_code, 200, scored.text)
+        self.assertEqual(FilterResult.model_validate(scored.json()), stub.score_generation(direct, plan, []))
 
     def test_generation_authentication_and_validation(self):
         client = self.client("generation", "t")
@@ -146,7 +142,6 @@ class ToolServerTests(unittest.TestCase):
         cases = [
             ("/generate", {"video": ("video.mp4", b"x" * 20)}, {"plan": self.plan.model_dump_json(), "seed": "42"}),
             ("/score", {"track": ("track.wav", b"x" * 20)}, {"plan": self.plan.model_dump_json(), "siblings": "[]"}),
-            ("/score", {"track": ("track.wav", b"x"), "reference": ("ref.wav", b"x" * 20)}, {"plan": self.plan.model_dump_json(), "siblings": "[]"}),
         ]
         with patch.dict("os.environ", AUDYSSEY_MAX_UPLOAD_MB=str(10 / 2**20)):
             client = self.client("generation")

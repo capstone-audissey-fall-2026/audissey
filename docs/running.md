@@ -184,7 +184,6 @@ AUDYSSEY_GENERATOR=remote AUDYSSEY_GENERATOR_URL=http://127.0.0.1:8701 uv run au
 - 기본 설정: `large_44k`, bf16, Euler 25회, CFG 4.5, 부정 프롬프트 없음. 설명만 사용하며 계획 구간·시각 힌트로 자르지 않습니다.
 - 10초까지 단일 생성, 그보다 길면 8초 창을 잇습니다. 마지막 창은 끝에 맞추므로 실제 겹침이 1초보다 길 수 있으며 전체 겹침을 선형 크로스페이드합니다. 44.1kHz 결과를 48kHz 모노로 리샘플하고 `round(duration * 48000)` 샘플에 맞춥니다.
 - CLAP 텍스트 TargetSel은 자기 설명이 가장 가깝고 margin이 임계값 이상이면 합격합니다. 형제가 없으면 margin 없이 합격합니다.
-- 대체 생성은 같은 job의 분리 stem 전체를 비교하여 `ref_correct`와 `ref_margin`도 기록합니다. 비교할 다른 분리 stem이 없으면 `ref_margin`은 생략합니다. 참조 점수는 합격 판정에 쓰지 않습니다.
 - 실행 중 다운로드를 막기 위해 real 생성·채점은 `HF_HUB_OFFLINE=1`을 필수로 요구합니다. 모델은 첫 호출 뒤 재사용하며 GPU 호출은 한 번에 하나씩 실행합니다.
 - 8초/10초 품질·시간·메모리와 6개 컨테이너 E2E는 측정 전입니다. `GENERATION_MARGIN_THRESHOLD`도 보정 전입니다.
 

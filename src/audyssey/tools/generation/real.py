@@ -208,8 +208,6 @@ def score_generation(
     track: Path,
     plan: SourcePlan,
     siblings: list[SourcePlan],
-    reference_stem: Path | None,
-    reference_stems: list[Path] | None = None,
 ) -> FilterResult:
     with _model_lock:
         torch, clap = _load_clap()
@@ -236,24 +234,5 @@ def score_generation(
                         f"closer to sibling: {siblings[best].name}"
                         if scores["text_correct"] == 0
                         else f"text margin {margin:.3f} below threshold {Settings().generation_margin_threshold}"
-                    )
-            if reference_stem is not None:
-                paths = [
-                    reference_stem,
-                    *[p for p in reference_stems or [] if p != reference_stem],
-                ]
-                references = np.concatenate(
-                    [
-                        clap.get_audio_embedding_from_data(
-                            x=read_wav(path).mean(axis=1)[None, :]
-                        )
-                        for path in paths
-                    ]
-                )
-                similarities = _cosines(audio, references)
-                scores["ref_correct"] = float(np.argmax(similarities) == 0)
-                if len(paths) > 1:
-                    scores["ref_margin"] = float(
-                        similarities[0] - max(similarities[1:])
                     )
     return FilterResult(passed=passed, scores=scores, reason=reason)

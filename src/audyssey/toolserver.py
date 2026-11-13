@@ -138,8 +138,6 @@ def create_tool_app(
             track: UploadFile,
             plan: Annotated[str, Form()],
             siblings: Annotated[str, Form()],
-            reference: UploadFile | None = None,
-            references: list[UploadFile] | None = None,
         ) -> FilterResult:
             source_plan = parse_plan(plan)
             try:
@@ -149,22 +147,11 @@ def create_tool_app(
             with TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 track_path = save_upload(track, root / "track.wav", limit)
-                reference_path = (
-                    save_upload(reference, root / "reference.wav", limit)
-                    if reference is not None
-                    else None
-                )
-                reference_paths = [
-                    save_upload(upload, root / f"reference_{i}.wav", limit)
-                    for i, upload in enumerate(references or [])
-                ]
                 with _model_lock:
                     return generation.score_generation(
                         track_path,
                         source_plan,
                         sibling_plans,
-                        reference_path,
-                        reference_paths,
                     )
 
     return app

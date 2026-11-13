@@ -157,10 +157,9 @@ class RemoteTests(unittest.TestCase):
                 remote = tools.generate(self.video, plan, self.root / "remote/track.wav", seed)
                 direct = stub.generate(self.video, plan, self.root / "direct.wav", seed)
                 np.testing.assert_array_equal(read_wav(remote), read_wav(direct))
-                for reference in [None, direct]:
-                    self.assertEqual(tools.score_generation(remote, plan, [sibling], reference), stub.score_generation(direct, plan, [sibling], reference))
+                self.assertEqual(tools.score_generation(remote, plan, [sibling]), stub.score_generation(direct, plan, [sibling]))
             with patch.dict(os.environ, AUDYSSEY_TOOL_TOKEN="wrong-secret"):
-                for call in [lambda: tools.generate(self.video, plan, self.root / "fail.wav", 43), lambda: tools.score_generation(direct, plan, [], None)]:
+                for call in [lambda: tools.generate(self.video, plan, self.root / "fail.wav", 43), lambda: tools.score_generation(direct, plan, [])]:
                     with self.assertRaisesRegex(RuntimeError, "401") as caught:
                         call()
                     self.assertNotIn("wrong-secret", str(caught.exception))

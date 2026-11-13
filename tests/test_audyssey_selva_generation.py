@@ -102,10 +102,10 @@ class SelvaGenerationTests(unittest.TestCase):
         self.assertEqual(read_wav(out).shape, (9600, 1))
         self.assertEqual(fake.evaluation.generate.call_args.args[1].shape[1], 16)
 
-    def score(self, fake, siblings=None, reference=None, competitors=None):
+    def score(self, fake, siblings=None):
         track = write_wav(self.root / 'generated.wav', np.zeros(48000))
         with patch.dict('sys.modules', fake.modules):
-            return self.real.score_generation(track, self.plan, [self.sibling] if siblings is None else siblings, reference, competitors or [])
+            return self.real.score_generation(track, self.plan, [self.sibling] if siblings is None else siblings)
 
     def test_score_text_targetsel(self):
         fake = runtime()
@@ -131,16 +131,6 @@ class SelvaGenerationTests(unittest.TestCase):
             result = self.score(runtime(), siblings=[])
         self.assertTrue(result.passed)
         self.assertEqual(result.scores, {'text_correct': 1})
-
-    def test_score_records_reference_targetsel(self):
-        fake = runtime()
-        reference = write_wav(self.root / 'reference.wav', np.zeros(48000))
-        competitor = write_wav(self.root / 'other.wav', np.ones(48000))
-        fake.clap.get_audio_embedding_from_data.side_effect = [np.array([[1., 0.]]), np.array([[0., 1.]]), np.array([[1., 0.]])]
-        result = self.score(fake, reference=reference, competitors=[competitor])
-        self.assertTrue(result.passed)
-        self.assertEqual(result.scores['ref_correct'], 0)
-        self.assertEqual(result.scores['ref_margin'], -1)
 
     def test_loading_requires_offline_mode_before_importing_models(self):
         with patch.dict(os.environ, {"HF_HUB_OFFLINE": "0"}), self.assertRaisesRegex(RuntimeError, "HF_HUB_OFFLINE=1"):

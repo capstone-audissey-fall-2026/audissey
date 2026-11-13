@@ -26,9 +26,7 @@ class Tools:
     locate: Callable[[Path, VisualHint], GroundResult]
     mask_video: Callable[[Path, VisualHint, Path], Path]
     generate: Callable[[Path, SourcePlan, Path, int], Path]
-    score_generation: Callable[
-        [Path, SourcePlan, list[SourcePlan], Path | None, list[Path]], FilterResult
-    ]
+    score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]
 
 
 def load_tools(settings: Settings) -> Tools:

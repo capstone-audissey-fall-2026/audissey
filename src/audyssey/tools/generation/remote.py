@@ -25,23 +25,13 @@ def score_generation(
     track: Path,
     plan: SourcePlan,
     siblings: list[SourcePlan],
-    reference_stem: Path | None,
-    reference_stems: list[Path] | None = None,
 ) -> FilterResult:
     settings = Settings()
     files = {"track": ("track.wav", track.read_bytes(), "audio/wav")}
-    if reference_stem is not None:
-        files["reference"] = ("reference.wav", reference_stem.read_bytes(), "audio/wav")
-    uploads = list(files.items())
-    uploads.extend(
-        ("references", ("reference.wav", path.read_bytes(), "audio/wav"))
-        for path in reference_stems or []
-        if path != reference_stem
-    )
     response = post(
         settings.generator_url,
         "/score",
-        uploads,
+        files,
         {
             "plan": plan.model_dump_json(),
             "siblings": json.dumps([p.model_dump() for p in siblings]),
