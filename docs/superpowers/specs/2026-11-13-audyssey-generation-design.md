@@ -191,7 +191,7 @@ score_generation: Callable[[Path, SourcePlan, list[SourcePlan]], FilterResult]
 - 구현 첫 단계에서 8초와 15초 단일 생성 품질을 비교해, 15초 기본값이 괜찮은지 기록한다(§10).
 
 **채점 (텍스트 TargetSel만 사용)**
-- LAION-CLAP으로 생성 stem의 오디오 임베딩과, 자기 설명 및 형제 설명들의 텍스트 임베딩 사이 코사인 유사도를 구한다.
+- LAION-CLAP으로 48kHz 모노 stem 전체를 고정 10초 창(1초 겹침, 마지막 창은 끝에 정렬, 10초 이하는 한 창으로 CLAP 기본 패딩)으로 임베딩하고, 각 L2 정규화 임베딩의 평균을 다시 L2 정규화해 자기 설명 및 형제 설명들의 텍스트 임베딩과 코사인 유사도를 구한다.
 - 점수(`FilterResult.scores`):
   - `text_correct`: 자기 설명이 가장 가까우면 1, 아니면 0
   - `text_margin`: 자기 설명과의 유사도 − 형제 설명 가운데 가장 높은 유사도

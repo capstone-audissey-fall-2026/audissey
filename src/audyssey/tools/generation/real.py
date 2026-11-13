@@ -213,9 +213,22 @@ def score_generation(
     with _model_lock:
         torch, clap = _load_clap()
         with torch.inference_mode():
-            audio = clap.get_audio_embedding_from_data(
-                x=read_wav(track).mean(axis=1)[None, :]
-            )[0]
+            mono = read_wav(track).mean(axis=1)
+            embeddings = np.stack(
+                [
+                    clap.get_audio_embedding_from_data(
+                        x=mono[None, round(start * 48000) : round(end * 48000)]
+                    )[0]
+                    for start, end in windows(len(mono) / 48000, 10, 10)
+                ]
+            )
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            audio = np.divide(
+                embeddings, norms, out=np.zeros_like(embeddings), where=norms > 0
+            ).mean(axis=0)
+            norm = np.linalg.norm(audio)
+            if norm > 0:
+                audio /= norm
             texts = clap.get_text_embedding(
                 [plan.description, *[s.description for s in siblings]]
             )

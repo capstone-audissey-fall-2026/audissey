@@ -129,6 +129,45 @@ class SelvaGenerationTests(unittest.TestCase):
         self.assertEqual(result.scores['text_margin'], -1)
         self.assertEqual(result.reason, 'closer to sibling: rain')
 
+    def test_score_averages_fixed_windows_and_is_repeatable(self):
+        fake = runtime()
+        track = write_wav(self.root / 'long.wav', np.linspace(0, .75, 15 * 48000))
+        mono = read_wav(track).mean(axis=1)
+        seen = []
+
+        def embed(x):
+            seen.append(x.copy())
+            # Emulate a crop-dependent model if the scorer sends more than 10 s.
+            second = len(seen) % 2 == 0 if x.shape[1] > 480000 else x[0, 0] > .1
+            return np.array([[0., 4.]]) if second else np.array([[3., 0.]])
+
+        fake.clap.get_audio_embedding_from_data.side_effect = embed
+        with patch.dict('sys.modules', fake.modules):
+            first = self.real.score_generation(track, self.plan, [self.sibling])
+            second = self.real.score_generation(track, self.plan, [self.sibling])
+        self.assertEqual(first, second)
+        self.assertTrue(first.passed)
+        self.assertAlmostEqual(first.scores['text_margin'], .4 / 2 ** .5)
+        self.assertEqual(len(seen), 4)
+        for offset in (0, 2):
+            np.testing.assert_array_equal(seen[offset], mono[None, :480000])
+            np.testing.assert_array_equal(seen[offset + 1], mono[None, 240000:720000])
+
+    def test_score_short_tracks_use_one_window(self):
+        fake = runtime()
+        for samples in (1, 48000, 480000):
+            with self.subTest(samples=samples):
+                fake.clap.get_audio_embedding_from_data.reset_mock()
+                track = write_wav(self.root / 'short.wav', np.full(samples, .25))
+                with patch.dict('sys.modules', fake.modules):
+                    result = self.real.score_generation(track, self.plan, [self.sibling])
+                self.assertTrue(result.passed)
+                fake.clap.get_audio_embedding_from_data.assert_called_once()
+                np.testing.assert_array_equal(
+                    fake.clap.get_audio_embedding_from_data.call_args.kwargs['x'],
+                    read_wav(track).mean(axis=1)[None, :],
+                )
+
     def test_score_positive_margin_below_threshold_fails(self):
         with patch.dict(os.environ, {'AUDYSSEY_GENERATION_MARGIN_THRESHOLD': '0.9'}):
             result = self.score(runtime())
